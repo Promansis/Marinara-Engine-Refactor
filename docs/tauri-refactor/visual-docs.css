@@ -1,0 +1,378 @@
+:root {
+  color-scheme: light;
+  --bg: oklch(0.965 0.008 83);
+  --panel: oklch(0.994 0.005 83);
+  --panel-2: oklch(0.935 0.013 83);
+  --ink: oklch(0.205 0.02 76);
+  --muted: oklch(0.48 0.027 76);
+  --line: oklch(0.78 0.027 76);
+  --accent: oklch(0.47 0.135 31);
+  --accent-2: oklch(0.53 0.104 176);
+  --accent-3: oklch(0.43 0.09 274);
+  --shadow: 0 22px 70px oklch(0.35 0.04 76 / 0.13);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    linear-gradient(180deg, oklch(0.985 0.006 83), var(--bg) 380px),
+    var(--bg);
+  color: var(--ink);
+}
+
+a {
+  color: inherit;
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 34px clamp(20px, 4vw, 64px) 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0;
+  font-size: clamp(2rem, 4vw, 4.4rem);
+  line-height: 0.96;
+  letter-spacing: 0;
+}
+
+h2 {
+  font-size: clamp(1.35rem, 2vw, 2rem);
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+h3 {
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+nav a {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+nav a[aria-current="page"] {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: oklch(0.95 0.035 31);
+}
+
+main {
+  padding: 34px clamp(20px, 4vw, 64px) 72px;
+}
+
+.intro-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 28px;
+  align-items: stretch;
+}
+
+.intro-copy {
+  padding: clamp(26px, 5vw, 70px) 0;
+}
+
+.intro-copy h2 {
+  max-width: 760px;
+  font-size: clamp(2rem, 5vw, 5.4rem);
+  line-height: 0.95;
+}
+
+.intro-copy p {
+  max-width: 68ch;
+  font-size: 1.05rem;
+}
+
+.status-panel,
+.diagram-shell,
+.sync-flow,
+.docker-diagram,
+.split-table,
+.module-matrix,
+.stack-strip {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.status-panel {
+  display: grid;
+  align-content: center;
+  gap: 18px;
+  padding: 24px;
+}
+
+.status-panel div,
+.flow-node,
+.compose-service,
+.matrix div,
+.doc-grid a,
+.layers div {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: oklch(0.985 0.006 83);
+}
+
+.status-panel div {
+  padding: 18px;
+}
+
+.status-panel span,
+.flow-node span,
+.doc-grid span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 26px;
+  margin-bottom: 12px;
+  border-radius: 999px;
+  background: oklch(0.92 0.04 176);
+  color: oklch(0.28 0.075 176);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.status-panel strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.status-panel p {
+  margin-bottom: 0;
+  font-size: 0.92rem;
+}
+
+.doc-list,
+.stack-strip,
+.diagram-shell,
+.module-matrix,
+.sync-flow,
+.docker-diagram,
+.split-table {
+  margin-top: 34px;
+  padding: 24px;
+}
+
+.doc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.doc-grid a {
+  display: block;
+  min-height: 162px;
+  padding: 18px;
+  text-decoration: none;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.doc-grid a:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  background: oklch(0.965 0.018 83);
+}
+
+.doc-grid strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.doc-grid p {
+  margin-bottom: 0;
+  font-size: 0.92rem;
+}
+
+.layers {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.layers div {
+  min-height: 116px;
+  padding: 16px;
+}
+
+.layers strong,
+.layers span {
+  display: block;
+}
+
+.layers span {
+  margin-top: 10px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: baseline;
+  margin-bottom: 18px;
+}
+
+.section-heading h2 {
+  margin-bottom: 0;
+}
+
+.section-heading p {
+  max-width: 62ch;
+  margin-bottom: 0;
+  font-size: 0.95rem;
+}
+
+.mermaid {
+  width: 100%;
+  min-height: 320px;
+  margin: 0;
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: oklch(0.982 0.006 83);
+}
+
+.mermaid svg {
+  max-width: none;
+}
+
+.mermaid .node rect,
+.mermaid .node polygon,
+.mermaid .node circle,
+.mermaid .node ellipse {
+  filter: drop-shadow(0 8px 16px oklch(0.35 0.04 76 / 0.08));
+}
+
+.mermaid .cluster rect {
+  rx: 12px;
+}
+
+.matrix,
+.flow-grid,
+.compose-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.matrix div,
+.flow-node,
+.compose-service {
+  padding: 18px;
+}
+
+.flow-node span {
+  background: oklch(0.93 0.05 31);
+  color: oklch(0.35 0.11 31);
+}
+
+.compose-service.primary {
+  background: oklch(0.93 0.05 176);
+  border-color: oklch(0.68 0.06 176);
+}
+
+.compose-service strong,
+.compose-service span {
+  display: block;
+}
+
+.compose-service span {
+  margin: 6px 0 10px;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+th,
+td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+td {
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .topbar,
+  .intro-grid {
+    display: block;
+  }
+
+  nav {
+    margin-top: 20px;
+  }
+
+  .layers {
+    grid-template-columns: 1fr;
+  }
+
+  .status-panel {
+    margin-top: 18px;
+  }
+}

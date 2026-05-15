@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Marinara Tauri Refactor Architecture</title>
+    <link rel="stylesheet" href="./visual-docs.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Marinara Engine</p>
+        <h1>Tauri Refactor Architecture</h1>
+      </div>
+      <nav aria-label="Documentation views">
+        <a href="./index.html" aria-current="page">Overview</a>
+        <a href="./architecture.html">Architecture</a>
+        <a href="./sync-server.html">Sync Server</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="intro-grid">
+        <div class="intro-copy">
+          <h2>Local-first desktop app, Rust-owned trust boundaries, unchanged React UI.</h2>
+          <p>
+            This visual guide summarizes the Markdown architecture pack. It is meant for developers executing the full
+            migration from the existing Node server and React client into a Rust + Tauri application.
+          </p>
+        </div>
+        <div class="status-panel" aria-label="Architecture priorities">
+          <div>
+            <span>01</span>
+            <strong>Preserve UI</strong>
+            <p>Move files and boundaries without redesigning the product experience.</p>
+          </div>
+          <div>
+            <span>02</span>
+            <strong>Own secrets in Rust</strong>
+            <p>Provider keys, OAuth tokens, files, processes, and provider calls stay native.</p>
+          </div>
+          <div>
+            <span>03</span>
+            <strong>Clear module ownership</strong>
+            <p>Rust stays minimal and explicit while backend responsibilities move into reviewed slices.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc-list">
+        <h2>Markdown Architecture Pack</h2>
+        <div class="doc-grid">
+          <a href="./README.md"><span>Start</span><strong>README</strong><p>Index and core principles.</p></a>
+          <a href="./00-source-inventory.md"><span>00</span><strong>Source Inventory</strong><p>Original source areas every slice must account for.</p></a>
+          <a href="./01-target-structure.md"><span>01</span><strong>Target Structure</strong><p>Workspace and ownership rules.</p></a>
+          <a href="./02-rust-backend-modules.md"><span>02</span><strong>Rust Backend Modules</strong><p>Crate and file responsibilities.</p></a>
+          <a href="./03-frontend-organization.md"><span>03</span><strong>Frontend Organization</strong><p>Feature-based React layout.</p></a>
+          <a href="./04-feature-coverage-map.md"><span>04</span><strong>Feature Coverage</strong><p>Every app feature mapped.</p></a>
+          <a href="./05-commands-and-events.md"><span>05</span><strong>Commands And Events</strong><p>Tauri IPC and stream events.</p></a>
+          <a href="./06-migration-plan.md"><span>06</span><strong>Migration Plan</strong><p>Step-by-step implementation order.</p></a>
+          <a href="./07-crates-and-plugins.md"><span>07</span><strong>Crates And Plugins</strong><p>Rust and Tauri package choices.</p></a>
+          <a href="./08-quality-rules.md"><span>08</span><strong>Quality Rules</strong><p>Testing, security, and file size limits.</p></a>
+          <a href="./09-sync-server.md"><span>09</span><strong>Sync Server</strong><p>Docker/self-hosted sync design.</p></a>
+          <a href="./10-research-notes.md"><span>10</span><strong>Research Notes</strong><p>Sources and ecosystem decisions.</p></a>
+        </div>
+      </section>
+
+      <section class="stack-strip" aria-label="Stack summary">
+        <h2>Stack Layers</h2>
+        <div class="layers">
+          <div><strong>React UI</strong><span>Features, hooks, stores, visual state</span></div>
+          <div><strong>Tauri IPC</strong><span>Typed commands, events, permissions</span></div>
+          <div><strong>Rust Services</strong><span>Generation, game, agents, integrations</span></div>
+          <div><strong>Storage</strong><span>Local data, blobs, backups, sync queue</span></div>
+          <div><strong>Optional Sync</strong><span>Docker server, WebSocket, blobs</span></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

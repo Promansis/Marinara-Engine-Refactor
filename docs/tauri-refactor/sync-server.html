@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Marinara Sync Server</title>
+    <link rel="stylesheet" href="./visual-docs.css" />
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+      mermaid.initialize({
+        startOnLoad: true,
+        securityLevel: "strict",
+        theme: "base",
+        themeVariables: {
+          background: "transparent",
+          primaryColor: "#f7f1e8",
+          primaryTextColor: "#2f261f",
+          primaryBorderColor: "#bda995",
+          lineColor: "#9b6b4b",
+          secondaryColor: "#e8f3ef",
+          tertiaryColor: "#eeeaf5",
+          fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+          clusterBkg: "#fbf8f2",
+          clusterBorder: "#bda995",
+          edgeLabelBackground: "#fbf8f2",
+          nodeBorder: "#bda995",
+          mainBkg: "#fbf8f2",
+        },
+        flowchart: {
+          curve: "basis",
+          htmlLabels: true,
+          padding: 18,
+          nodeSpacing: 42,
+          rankSpacing: 58,
+        },
+        sequence: {
+          showSequenceNumbers: true,
+          mirrorActors: false,
+          actorMargin: 72,
+        },
+      });
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Docker deployment</p>
+        <h1>Optional Sync Server</h1>
+      </div>
+      <nav aria-label="Documentation views">
+        <a href="./index.html">Overview</a>
+        <a href="./architecture.html">Architecture</a>
+        <a href="./sync-server.html" aria-current="page">Sync Server</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="diagram-shell">
+        <div class="section-heading">
+          <h2>Self-Hosted Sync Topology</h2>
+          <p>Each desktop install keeps its own data. The Docker server coordinates changes and blobs.</p>
+        </div>
+        <pre class="mermaid">
+flowchart LR
+  subgraph DeviceA["Desktop A"]
+    AUI["React sync UI"]
+    AClient["sync-client"]
+    AStore[("Local storage")]
+    AQueue[("Sync queue")]
+  end
+
+  subgraph DeviceB["Desktop B"]
+    BUI["React sync UI"]
+    BClient["sync-client"]
+    BStore[("Local storage")]
+    BQueue[("Sync queue")]
+  end
+
+  subgraph Server["Docker sync server"]
+    API["Axum API<br/>REST + WebSocket"]
+    Auth["Auth + devices"]
+    Sync["Sync service<br/>heads + operations"]
+    Conflicts["Conflict service"]
+    Db[("Raw metadata files or Postgres")]
+    Blobs[("Local FS / S3 / MinIO")]
+    Redis[("Redis optional")]
+  end
+
+  AUI --> AClient
+  AClient --> AStore
+  AClient --> AQueue
+  BUI --> BClient
+  BClient --> BStore
+  BClient --> BQueue
+
+  AClient <-->|pair, push, pull, blobs, heads| API
+  BClient <-->|pair, push, pull, blobs, heads| API
+  API --> Auth
+  API --> Sync
+  Sync --> Conflicts
+  Sync --> Db
+  Auth --> Db
+  Conflicts --> Db
+  API --> Blobs
+  API -. websocket fanout .-> Redis
+        </pre>
+      </section>
+
+      <section class="diagram-shell">
+        <div class="section-heading">
+          <h2>Sync Lifecycle</h2>
+          <p>Local writes are immediate. Network sync is resumable and conflict-aware.</p>
+        </div>
+        <pre class="mermaid">
+sequenceDiagram
+  participant UI as React UI
+  participant LOCAL as Local Rust repositories
+  participant QUEUE as Sync queue
+  participant CLIENT as Sync client
+  participant SERVER as Docker sync API
+  participant DB as Sync metadata DB
+  participant BLOB as Blob store
+
+  UI->>LOCAL: save chat/message/file/settings
+  LOCAL->>QUEUE: append operation + blob refs
+  CLIENT->>SERVER: push operations since cursor
+  SERVER->>DB: validate and store changes
+  SERVER-->>CLIENT: ack heads + missing blob refs
+  CLIENT->>BLOB: upload missing blobs
+  SERVER-->>CLIENT: websocket heads update
+  CLIENT->>SERVER: pull missing operations
+  SERVER->>DB: read changes by collection
+  SERVER-->>CLIENT: changes + conflict markers
+  CLIENT->>LOCAL: merge safe changes
+  CLIENT-->>UI: sync://status and sync://conflict
+        </pre>
+      </section>
+
+      <section class="diagram-shell">
+        <div class="section-heading">
+          <h2>Data Classification</h2>
+          <p>Different data classes use different sync strategies. Secrets stay local unless explicitly encrypted later.</p>
+        </div>
+        <pre class="mermaid">
+flowchart TB
+  Data["Marinara local data"] --> Metadata["Metadata operations"]
+  Data --> Settings["Settings"]
+  Data --> Files["Blob files"]
+  Data --> Secrets["Secrets"]
+  Data --> LocalOnly["Local-only runtime data"]
+
+  Metadata --> CRDT["CRDT or append-only log<br/>chats, messages, characters, lorebooks, game notes"]
+  Settings --> LWW["LWW + revision history<br/>UI prefs, haptic, TTS, translation, generation params"]
+  Files --> CAS["Content-addressed blobs<br/>avatars, gallery, sprites, backgrounds, backups"]
+  Secrets --> NoSync["Do not sync by default<br/>API keys, OAuth refresh tokens"]
+  LocalOnly --> Ignore["Never sync<br/>sidecar binaries, runtime installs, temp logs"]
+        </pre>
+      </section>
+
+      <section class="docker-diagram">
+        <h2>Docker Compose Services</h2>
+        <div class="compose-grid">
+          <div class="compose-service primary">
+            <strong>sync-api</strong>
+            <span>Rust + Axum</span>
+            <p>REST, WebSocket, auth, sync protocol, OpenAPI.</p>
+          </div>
+          <div class="compose-service">
+            <strong>postgres</strong>
+            <span>Metadata</span>
+            <p>Devices, changes, heads, conflicts, snapshots.</p>
+          </div>
+          <div class="compose-service">
+            <strong>object storage</strong>
+            <span>Local FS or S3</span>
+            <p>Avatars, gallery, sprites, generated assets, backups.</p>
+          </div>
+          <div class="compose-service">
+            <strong>redis</strong>
+            <span>Optional</span>
+            <p>Rate limits, queues, fanout for larger installs.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

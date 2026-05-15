@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Marinara Architecture Stack</title>
+    <link rel="stylesheet" href="./visual-docs.css" />
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+      mermaid.initialize({
+        startOnLoad: true,
+        securityLevel: "strict",
+        theme: "base",
+        themeVariables: {
+          background: "transparent",
+          primaryColor: "#f7f1e8",
+          primaryTextColor: "#2f261f",
+          primaryBorderColor: "#bda995",
+          lineColor: "#9b6b4b",
+          secondaryColor: "#e8f3ef",
+          tertiaryColor: "#eeeaf5",
+          fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+          clusterBkg: "#fbf8f2",
+          clusterBorder: "#bda995",
+          edgeLabelBackground: "#fbf8f2",
+          nodeBorder: "#bda995",
+          mainBkg: "#fbf8f2",
+        },
+        flowchart: {
+          curve: "basis",
+          htmlLabels: true,
+          padding: 18,
+          nodeSpacing: 42,
+          rankSpacing: 58,
+        },
+        sequence: {
+          showSequenceNumbers: true,
+          mirrorActors: false,
+          actorMargin: 72,
+        },
+      });
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Architecture diagrams</p>
+        <h1>How The Tauri App Connects</h1>
+      </div>
+      <nav aria-label="Documentation views">
+        <a href="./index.html">Overview</a>
+        <a href="./architecture.html" aria-current="page">Architecture</a>
+        <a href="./sync-server.html">Sync Server</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="diagram-shell">
+        <div class="section-heading">
+          <h2>Platform Map</h2>
+          <p>Desktop and optional hosted components. The Tauri app is local-first; Docker sync is optional.</p>
+        </div>
+        <pre class="mermaid">
+flowchart LR
+  subgraph Desktop["Tauri desktop app"]
+    UI["React UI<br/>features/*"]
+    API["shared/api<br/>typed invoke + events"]
+    Host["Tauri host<br/>commands, events, state"]
+    Rust["Rust domain crates<br/>services + repositories"]
+    LocalData[("Local app data<br/>storage + blobs")]
+    Sidecar["Local AI sidecar<br/>llama.cpp / MLX"]
+    Native["Native devices<br/>filesystem, haptics"]
+  end
+
+  subgraph Providers["External services"]
+    LLM["LLM APIs"]
+    Image["Image APIs"]
+    Spotify["Spotify"]
+    TTS["TTS / translation"]
+    Bot["Bot-browser sources"]
+  end
+
+  subgraph Docker["Optional Docker sync"]
+    SyncAPI["sync-api<br/>Rust + Axum"]
+    SyncDb[("Raw metadata files or Postgres")]
+    Blob[("Local FS / S3 / MinIO")]
+    Redis[("Redis optional")]
+  end
+
+  UI --> API --> Host --> Rust
+  Rust --> LocalData
+  Rust --> Sidecar
+  Rust --> Native
+  Rust --> LLM
+  Rust --> Image
+  Rust --> Spotify
+  Rust --> TTS
+  Rust --> Bot
+  Rust -. device auth, changes, blobs .-> SyncAPI
+  SyncAPI --> SyncDb
+  SyncAPI --> Blob
+  SyncAPI -. optional fanout .-> Redis
+  SyncAPI -. heads + conflicts .-> Rust
+        </pre>
+      </section>
+
+      <section class="diagram-shell">
+        <div class="section-heading">
+          <h2>Rust Module Dependency Graph</h2>
+          <p>Command files stay thin. Domain crates depend on core, storage, security, and provider abstractions.</p>
+        </div>
+        <pre class="mermaid">
+flowchart TB
+  Commands["src-tauri/src/commands<br/>thin IPC layer"]
+  Events["src-tauri/src/events<br/>typed event emitters"]
+  Core["core<br/>errors, config, IDs, event bus"]
+  Security["security<br/>secrets, paths, safe fetch"]
+  Storage["storage<br/>repositories, backups, migrations"]
+
+  LLM["llm<br/>providers, images, embeddings"]
+  Generation["generation<br/>prompt + streaming pipeline"]
+  Agents["agents<br/>tools, memory, knowledge"]
+  Chat["chat<br/>messages, swipes, folders"]
+  Conversation["conversation<br/>schedules, awareness"]
+  Roleplay["roleplay<br/>scene, sprites, encounters"]
+  Game["game<br/>turns, mechanics, world"]
+  Assets["assets<br/>avatars, gallery, fonts"]
+  Sidecar["sidecar<br/>models, runtime, process"]
+  Imports["import<br/>ST import, backups, profiles"]
+  Integrations["integrations<br/>spotify, haptic, tts, translation, bot browser"]
+  Updates["updates<br/>check + apply"]
+  SyncClient["sync-client<br/>queue, push, pull, conflicts"]
+  SyncProtocol["sync-protocol<br/>sync DTOs"]
+
+  Commands --> Generation
+  Commands --> Chat
+  Commands --> Game
+  Commands --> Roleplay
+  Commands --> Integrations
+  Commands --> SyncClient
+  Events --> Core
+
+  Generation --> LLM
+  Generation --> Agents
+  Generation --> Chat
+  Generation --> Storage
+  Generation --> Security
+
+  Agents --> LLM
+  Agents --> Storage
+  Agents --> Integrations
+
+  Conversation --> Chat
+  Roleplay --> Generation
+  Roleplay --> Assets
+  Game --> Generation
+  Game --> Assets
+  Game --> Sidecar
+
+  LLM --> Security
+  Sidecar --> Security
+  Imports --> Security
+  Imports --> Storage
+  Assets --> Storage
+  Updates --> Security
+  SyncClient --> SyncProtocol
+  SyncClient --> Storage
+  SyncClient --> Security
+
+  Security --> Core
+  Storage --> Core
+        </pre>
+      </section>
+
+      <section class="diagram-shell">
+        <div class="section-heading">
+          <h2>Generation Runtime Sequence</h2>
+          <p>Streaming stays event-driven. The frontend receives tokens and structured updates without owning secrets.</p>
+        </div>
+        <pre class="mermaid">
+sequenceDiagram
+  participant UI as React feature hook
+  participant API as shared/api client
+  participant CMD as Tauri command
+  participant GEN as generation
+  participant AG as agents
+  participant LLM as llm
+  participant STORE as storage
+  participant EVT as Tauri events
+
+  UI->>API: generation_start(input)
+  API->>CMD: invoke("generation_start")
+  CMD->>GEN: start_generation(input, app_state)
+  GEN->>STORE: load chat, settings, lorebooks, presets
+  GEN->>AG: prepare enabled agents
+  GEN->>LLM: stream provider request
+  loop provider tokens
+    LLM-->>GEN: token or provider event
+    GEN-->>EVT: generation://token
+    EVT-->>UI: append token
+  end
+  GEN->>AG: run post-generation agents
+  GEN->>STORE: persist message, swipes, metadata
+  GEN-->>EVT: generation://done
+  EVT-->>UI: invalidate queries and finalize
+        </pre>
+      </section>
+
+      <section class="module-matrix">
+        <h2>Module Groups</h2>
+        <div class="matrix">
+          <div>
+            <h3>Core</h3>
+            <p>core, security, storage, domain DTOs</p>
+          </div>
+          <div>
+            <h3>Generation</h3>
+            <p>llm, generation, agents, lorebook, regex, prompt pipeline</p>
+          </div>
+          <div>
+            <h3>Modes</h3>
+            <p>chat, conversation, roleplay, visual novel, game</p>
+          </div>
+          <div>
+            <h3>Native</h3>
+            <p>sidecar, imports, assets, haptic, updates, filesystem</p>
+          </div>
+          <div>
+            <h3>Integrations</h3>
+            <p>spotify, tts, translation, bot browser, Discord, Home Assistant</p>
+          </div>
+          <div>
+            <h3>Sync</h3>
+            <p>local queue, Docker API, WebSocket heads, blob transfer, conflicts</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
