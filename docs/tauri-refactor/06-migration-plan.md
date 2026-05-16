@@ -13,6 +13,8 @@ Each phase is a review checkpoint, not a release milestone. Keep slices small, u
 
 ## Phase 0: Baseline Structure
 
+Status: Complete.
+
 1. Add `src/app`, `src/shared`, and `src/features`.
 2. Move only starter app bootstrap into `src/app`.
 3. Add Rust workspace crate folders with concise names.
@@ -26,6 +28,8 @@ Exit criteria:
 - No old Marinara UI is copied yet.
 
 ## Phase 1: Frontend Shell And Shared Foundations
+
+Status: Complete.
 
 1. Move app shell: bootstrap, providers, top-level layout, navigation surfaces, modal/drawer roots.
 2. Move global styles and theme loading.

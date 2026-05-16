@@ -1,51 +1,86 @@
-import { useState } from "react";
-import reactLogo from "../assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useEffect } from "react";
+import { Toaster } from "sonner";
+import { AppShell } from "./shell/AppShell";
+import { CustomThemeInjector } from "./providers/CustomThemeInjector";
+import { AppDialogRenderer } from "../shared/components/ui/AppDialogRenderer";
+import { useUIStore } from "../shared/stores/ui.store";
+import { installRangeSliderSync } from "./startup/range-slider-sync";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+function stripFontFamilyQuotes(family: string): string {
+  const trimmed = family.trim();
+  if (trimmed.length < 2) return trimmed;
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  const quote = trimmed[0];
+  if ((quote !== `"` && quote !== `'`) || trimmed[trimmed.length - 1] !== quote) {
+    return trimmed;
   }
 
-  return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vitejs.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://reactjs.org" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
-  );
+  return trimmed.slice(1, -1).trim();
 }
 
-export default App;
+function toCssFontFamilyValue(family: string): string {
+  const cleanFamily = stripFontFamilyQuotes(family);
+  return `"${cleanFamily.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+export function App() {
+  const theme = useUIStore((s) => s.theme);
+  const fontSize = useUIStore((s) => s.fontSize);
+  const language = useUIStore((s) => s.language);
+  const visualTheme = useUIStore((s) => s.visualTheme);
+  const fontFamily = useUIStore((s) => s.fontFamily);
+
+  useEffect(() => installRangeSliderSync(), []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
+
+  useEffect(() => {
+    if (visualTheme && visualTheme !== "default") {
+      document.documentElement.dataset.visualTheme = visualTheme;
+    } else {
+      delete document.documentElement.dataset.visualTheme;
+    }
+  }, [visualTheme]);
+
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${fontSize}px`;
+  }, [fontSize]);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+
+  useEffect(() => {
+    const family = fontFamily ? stripFontFamilyQuotes(fontFamily) : "";
+    if (family) {
+      document.documentElement.style.setProperty("--font-user", toCssFontFamilyValue(family));
+    } else {
+      document.documentElement.style.removeProperty("--font-user");
+    }
+  }, [fontFamily]);
+
+  return (
+    <>
+      <CustomThemeInjector />
+      <AppShell />
+      <AppDialogRenderer />
+      <Toaster
+        position="bottom-right"
+        theme={theme}
+        closeButton
+        toastOptions={{
+          style: {
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            color: "var(--foreground)",
+            userSelect: "text",
+            WebkitUserSelect: "text",
+          },
+        }}
+      />
+    </>
+  );
+}

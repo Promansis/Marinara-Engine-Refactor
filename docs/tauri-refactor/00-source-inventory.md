@@ -56,7 +56,22 @@ Do not leave a touched source area unaccounted for.
 
 ### Phase 0 Baseline Structure
 
+Status: Complete.
+
 - Starter Tauri frontend bootstrap moved from `src/main.tsx`, `src/App.tsx`, and `src/App.css` to `src/app`.
 - Starter sample assets in `src/assets` and `public` are deferred until sample Tauri code is removed during hardening.
 - Rust backend source remains starter Tauri code in `src-tauri/src`; planned domain crate homes are mapped under `src-tauri/crates`.
 - No original Marinara source from `E:/Personal Projects/Marinara-Engine` has been moved yet.
+
+### Phase 1 Frontend Shell And Shared Foundations
+
+Status: Complete.
+
+- Moved original `packages/client/src/App.tsx` and `main.tsx` into `src/app`, then adapted them for the Tauri refactor shell without old HTTP health checks, PWA registration, keep-alive, CSRF fetch shims, or server font preloading.
+- Moved original `components/layout/AppShell.tsx`, `TopBar.tsx`, `RightPanel.tsx`, `ModalRenderer.tsx`, and `CustomThemeInjector.tsx` into `src/app/shell` and `src/app/providers`.
+- Mapped original shell-owned range slider setup into `src/app/startup/range-slider-sync.ts`.
+- Moved original shared UI dialog/modal primitives from `components/ui/AppDialogRenderer.tsx` and `components/ui/Modal.tsx` into `src/shared/components/ui`.
+- Moved original frontend-only helpers `lib/utils.ts` and `lib/app-dialogs.ts` into `src/shared/lib`.
+- Moved original browser UI state stores `stores/ui.store.ts` and `stores/dialog.store.ts` into `src/shared/stores`.
+- Global styles are present under `src/styles/globals.css` and `src/styles/themes/sillytavern.css`; `src/app/main.tsx` imports them directly.
+- Deferred feature screens and backend-backed surfaces from `components/chat`, `components/panels`, `components/modals`, `components/spotify`, `components/onboarding`, feature hooks, feature stores, and backend API clients to Phase 2+ slices. Current shell placeholders preserve navigation locations without adding fake backend behavior.
