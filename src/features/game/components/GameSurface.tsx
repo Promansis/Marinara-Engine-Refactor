@@ -52,6 +52,13 @@ import { cn, type AvatarCrop, type LegacyAvatarCrop, type AvatarCropValue } from
 import { filterLanguageGenerationConnections } from "../../../shared/lib/connection-filters";
 import { audioManager } from "../lib/game-audio";
 import {
+  GAME_AUDIO_SETTINGS_STORAGE_KEY,
+  getEffectiveVolume,
+  normalizeVolume,
+  readPersistedGameAudioSettings,
+  type GameAudioSettings,
+} from "../lib/game-audio-settings";
+import {
   parseGmTags,
   parseSegmentInventoryUpdates,
   stripGmTags,
@@ -93,6 +100,7 @@ import type { SceneSegmentEffect } from "@marinara-engine/shared";
 import { scoreMusic, scoreAmbient } from "@marinara-engine/shared";
 import { GameNarration, formatNarration } from "./GameNarration";
 import { GameInput } from "./GameInput";
+import { GameVolumeMixer } from "./GameVolumeMixer";
 import { GameMapPanel, MobileMapButton } from "./GameMap";
 import { GamePartyBar } from "./GamePartyBar";
 import { GameCharacterSheet } from "./GameCharacterSheet";
@@ -1068,57 +1076,6 @@ function pickFallbackBackgroundTag(
   return tags.find((tag) => BACKGROUND_FALLBACK_HINT.test(tag)) ?? tags[0]!;
 }
 
-const DEFAULT_GAME_AUDIO_SETTINGS = {
-  masterVolume: 50,
-  musicVolume: 60,
-  sfxVolume: 80,
-  ttsVolume: 100,
-  ambientVolume: 50,
-  audioMuted: false,
-};
-const GAME_AUDIO_SETTINGS_STORAGE_KEY = "marinara-engine-game-audio";
-
-type GameAudioSettings = typeof DEFAULT_GAME_AUDIO_SETTINGS;
-
-function normalizeVolume(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : fallback;
-}
-
-function getEffectiveVolume(masterVolume: number, channelVolume: number): number {
-  return (Math.max(0, Math.min(100, masterVolume)) / 100) * (Math.max(0, Math.min(100, channelVolume)) / 100);
-}
-
-function readPersistedGameAudioSettings(): GameAudioSettings {
-  const defaults = {
-    ...DEFAULT_GAME_AUDIO_SETTINGS,
-    audioMuted:
-      typeof window !== "undefined"
-        ? localStorage.getItem("game-audio-muted") === "true"
-        : DEFAULT_GAME_AUDIO_SETTINGS.audioMuted,
-  };
-  if (typeof window === "undefined") return defaults;
-
-  try {
-    const raw = localStorage.getItem(GAME_AUDIO_SETTINGS_STORAGE_KEY);
-    if (!raw) return defaults;
-
-    const parsed = JSON.parse(raw) as Partial<GameAudioSettings>;
-    const masterVolume = normalizeVolume(parsed.masterVolume, defaults.masterVolume);
-    const audioMuted = typeof parsed.audioMuted === "boolean" ? parsed.audioMuted : masterVolume === 0;
-
-    return {
-      masterVolume,
-      musicVolume: normalizeVolume(parsed.musicVolume, defaults.musicVolume),
-      sfxVolume: normalizeVolume(parsed.sfxVolume, defaults.sfxVolume),
-      ttsVolume: normalizeVolume(parsed.ttsVolume, defaults.ttsVolume),
-      ambientVolume: normalizeVolume(parsed.ambientVolume, defaults.ambientVolume),
-      audioMuted: audioMuted || masterVolume === 0,
-    };
-  } catch {
-    return defaults;
-  }
-}
-
 function getNextInventoryItemName(items: Array<{ name: string }>): string {
   const baseName = "New item";
   const existingNames = new Set(items.map((item) => normalizeInventoryName(item.name).toLowerCase()));
@@ -1481,100 +1438,6 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-
-interface GameVolumeMixerProps {
-  audioMuted: boolean;
-  masterVolume: number;
-  musicVolume: number;
-  sfxVolume: number;
-  ttsVolume: number;
-  ambientVolume: number;
-  onMasterVolumeChange: (value: number) => void;
-  onMusicVolumeChange: (value: number) => void;
-  onSfxVolumeChange: (value: number) => void;
-  onTtsVolumeChange: (value: number) => void;
-  onAmbientVolumeChange: (value: number) => void;
-  onToggleMute: () => void;
-  onAudioInteract?: () => void;
-  className?: string;
-}
-
-function GameVolumeMixer({
-  audioMuted,
-  masterVolume,
-  musicVolume,
-  sfxVolume,
-  ttsVolume,
-  ambientVolume,
-  onMasterVolumeChange,
-  onMusicVolumeChange,
-  onSfxVolumeChange,
-  onTtsVolumeChange,
-  onAmbientVolumeChange,
-  onToggleMute,
-  onAudioInteract,
-  className,
-}: GameVolumeMixerProps) {
-  const rows = [
-    { id: "master", label: "Master", value: masterVolume, onChange: onMasterVolumeChange },
-    { id: "music", label: "Music", value: musicVolume, onChange: onMusicVolumeChange },
-    { id: "sfx", label: "Sound Effects", value: sfxVolume, onChange: onSfxVolumeChange },
-    { id: "tts", label: "TTS", value: ttsVolume, onChange: onTtsVolumeChange },
-    { id: "ambient", label: "Ambient", value: ambientVolume, onChange: onAmbientVolumeChange },
-  ];
-
-  return (
-    <div
-      className={cn(
-        "w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-white/15 bg-black/85 p-3 shadow-xl backdrop-blur-md",
-        className,
-      )}
-    >
-      <div className="mb-2 flex items-center justify-between gap-3 border-b border-white/10 pb-2">
-        <span className="text-[0.6875rem] font-semibold uppercase text-white/60">Volume</span>
-        <button
-          onClick={onToggleMute}
-          className={cn(
-            "flex h-7 w-7 items-center justify-center rounded-full transition-colors",
-            audioMuted
-              ? "bg-red-500/30 text-red-300 hover:bg-red-500/50"
-              : "bg-white/10 text-white/60 hover:bg-white/20 hover:text-white",
-          )}
-          title={audioMuted ? "Unmute" : "Mute"}
-          aria-label={audioMuted ? "Unmute" : "Mute"}
-        >
-          {audioMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}
-        </button>
-      </div>
-
-      <div className="flex flex-col gap-2.5">
-        {rows.map((row) => (
-          <label key={row.id} className="grid grid-cols-[5.5rem_1fr_2rem] items-center gap-2">
-            <span className="truncate text-[0.6875rem] text-white/70">{row.label}</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={row.value}
-              onPointerDown={onAudioInteract}
-              onTouchStart={onAudioInteract}
-              onInput={(e) => {
-                onAudioInteract?.();
-                row.onChange(Number(e.currentTarget.value));
-              }}
-              onChange={(e) => {
-                onAudioInteract?.();
-                row.onChange(Number(e.target.value));
-              }}
-              className="h-1.5 w-full cursor-pointer accent-[var(--primary)]"
-            />
-            <span className="text-right text-[0.6875rem] tabular-nums text-white/55">{row.value}</span>
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 /** Randomly sample up to `max` items from an array (Fisher-Yates shuffle). */
 function sampleTags(tags: string[], max: number): string[] {

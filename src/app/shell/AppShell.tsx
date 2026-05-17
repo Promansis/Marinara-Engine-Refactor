@@ -22,6 +22,7 @@ import { useIdleDetection } from "../../shared/hooks/use-idle-detection";
 import { usePageActivity } from "../../shared/hooks/use-page-activity";
 import { cn } from "../../shared/lib/utils";
 import { parseChatMetadata } from "../../shared/lib/chat-display";
+import { getDetailRouteView } from "./detail-route-registry";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   lazy,
@@ -37,27 +38,6 @@ import {
 } from "react";
 
 const ChatArea = lazy(() => import("../../features/chats/components/ChatArea").then((module) => ({ default: module.ChatArea })));
-const CharacterEditor = lazy(() =>
-  import("../../features/characters/components/CharacterEditor").then((module) => ({ default: module.CharacterEditor })),
-);
-const CharacterLibraryView = lazy(() =>
-  import("../../features/characters/components/CharacterLibraryView").then((module) => ({ default: module.CharacterLibraryView })),
-);
-const LorebookEditor = lazy(() =>
-  import("../../features/lorebooks/components/LorebookEditor").then((module) => ({ default: module.LorebookEditor })),
-);
-const PresetEditor = lazy(() => import("../../features/presets/components/PresetEditor").then((module) => ({ default: module.PresetEditor })));
-const ConnectionEditor = lazy(() =>
-  import("../../features/connections/components/ConnectionEditor").then((module) => ({ default: module.ConnectionEditor })),
-);
-const AgentEditor = lazy(() => import("../../features/agents/components/AgentEditor").then((module) => ({ default: module.AgentEditor })));
-const ToolEditor = lazy(() => import("../../features/agents/components/ToolEditor").then((module) => ({ default: module.ToolEditor })));
-const PersonaEditor = lazy(() =>
-  import("../../features/personas/components/PersonaEditor").then((module) => ({ default: module.PersonaEditor })),
-);
-const RegexScriptEditor = lazy(() =>
-  import("../../features/agents/components/RegexScriptEditor").then((module) => ({ default: module.RegexScriptEditor })),
-);
 const BotBrowserView = lazy(() =>
   import("../../features/bot-browser/components/BotBrowserView").then((module) => ({ default: module.BotBrowserView })),
 );
@@ -478,25 +458,17 @@ export function AppShell() {
     [setTrackerPanelWidth, trackerPanelSide, trackerPanelWidth],
   );
 
-  const detailView = regexDetailId ? (
-    <RegexScriptEditor />
-  ) : personaDetailId ? (
-    <PersonaEditor />
-  ) : toolDetailId ? (
-    <ToolEditor />
-  ) : agentDetailId ? (
-    <AgentEditor />
-  ) : connectionDetailId ? (
-    <ConnectionEditor />
-  ) : presetDetailId ? (
-    <PresetEditor />
-  ) : characterDetailId ? (
-    <CharacterEditor />
-  ) : characterLibraryOpen ? (
-    <CharacterLibraryView />
-  ) : lorebookDetailId ? (
-    <LorebookEditor />
-  ) : null;
+  const detailView = getDetailRouteView({
+    characterDetailId,
+    characterLibraryOpen,
+    lorebookDetailId,
+    presetDetailId,
+    connectionDetailId,
+    agentDetailId,
+    toolDetailId,
+    personaDetailId,
+    regexDetailId,
+  });
 
   const showAmbientDecor = isPageActive && !activeChatId && !detailView && !botBrowserOpen && !gameAssetsBrowserOpen;
   const hasDetailView = detailView != null;

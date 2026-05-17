@@ -175,6 +175,48 @@ export interface LegacyInstalledExtension {
   installedAt: string;
 }
 
+type FullPageRoutePatch = Partial<
+  Pick<
+    UIState,
+    | "characterDetailId"
+    | "lorebookDetailId"
+    | "presetDetailId"
+    | "connectionDetailId"
+    | "agentDetailId"
+    | "toolDetailId"
+    | "personaDetailId"
+    | "regexDetailId"
+    | "characterLibraryOpen"
+    | "botBrowserOpen"
+    | "gameAssetsBrowserOpen"
+    | "rightPanelOpen"
+    | "editorDirty"
+  >
+>;
+
+const CLEARED_DETAIL_IDS = {
+  characterDetailId: null,
+  lorebookDetailId: null,
+  presetDetailId: null,
+  connectionDetailId: null,
+  agentDetailId: null,
+  toolDetailId: null,
+  personaDetailId: null,
+  regexDetailId: null,
+} satisfies FullPageRoutePatch;
+
+function mobilePanelClosePatch(): FullPageRoutePatch {
+  return typeof window !== "undefined" && window.innerWidth < 768 ? { rightPanelOpen: false } : {};
+}
+
+function openDetailRouteState(patch: FullPageRoutePatch): FullPageRoutePatch {
+  return {
+    ...CLEARED_DETAIL_IDS,
+    ...patch,
+    ...mobilePanelClosePatch(),
+  };
+}
+
 interface UIState {
   sidebarOpen: boolean;
   sidebarWidth: number;
@@ -829,123 +871,33 @@ export const useUIStore = create<UIState>()(
       setTheme: (theme) => set({ theme }),
       setChatBackground: (url) => set({ chatBackground: url }),
       openCharacterDetail: (id) =>
-        set({
-          characterDetailId: id,
-          lorebookDetailId: null,
-          presetDetailId: null,
-          connectionDetailId: null,
-          agentDetailId: null,
-          personaDetailId: null,
-          regexDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
-        }),
+        set(openDetailRouteState({ characterDetailId: id })),
       closeCharacterDetail: () => set({ characterDetailId: null, editorDirty: false }),
       openLorebookDetail: (id) =>
-        set({
-          lorebookDetailId: id,
-          characterLibraryOpen: false,
-          characterDetailId: null,
-          presetDetailId: null,
-          connectionDetailId: null,
-          agentDetailId: null,
-          personaDetailId: null,
-          regexDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
-        }),
+        set(openDetailRouteState({ lorebookDetailId: id, characterLibraryOpen: false })),
       closeLorebookDetail: () => set({ lorebookDetailId: null, editorDirty: false }),
       openPresetDetail: (id) =>
-        set({
-          presetDetailId: id,
-          characterLibraryOpen: false,
-          characterDetailId: null,
-          lorebookDetailId: null,
-          connectionDetailId: null,
-          agentDetailId: null,
-          personaDetailId: null,
-          regexDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
-        }),
+        set(openDetailRouteState({ presetDetailId: id, characterLibraryOpen: false })),
       closePresetDetail: () => set({ presetDetailId: null, editorDirty: false }),
       openConnectionDetail: (id) =>
-        set({
-          connectionDetailId: id,
-          characterLibraryOpen: false,
-          characterDetailId: null,
-          lorebookDetailId: null,
-          presetDetailId: null,
-          agentDetailId: null,
-          personaDetailId: null,
-          regexDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
-        }),
+        set(openDetailRouteState({ connectionDetailId: id, characterLibraryOpen: false })),
       closeConnectionDetail: () => set({ connectionDetailId: null, editorDirty: false }),
       openAgentDetail: (agentType) =>
-        set({
-          agentDetailId: agentType,
-          characterLibraryOpen: false,
-          characterDetailId: null,
-          lorebookDetailId: null,
-          presetDetailId: null,
-          connectionDetailId: null,
-          toolDetailId: null,
-          personaDetailId: null,
-          regexDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
-        }),
+        set(openDetailRouteState({ agentDetailId: agentType, characterLibraryOpen: false })),
       closeAgentDetail: () => set({ agentDetailId: null, editorDirty: false }),
       openToolDetail: (id) =>
-        set({
-          toolDetailId: id,
-          agentDetailId: null,
-          characterLibraryOpen: false,
-          characterDetailId: null,
-          lorebookDetailId: null,
-          presetDetailId: null,
-          connectionDetailId: null,
-          personaDetailId: null,
-          regexDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
-        }),
+        set(openDetailRouteState({ toolDetailId: id, characterLibraryOpen: false })),
       closeToolDetail: () => set({ toolDetailId: null, editorDirty: false }),
       openPersonaDetail: (id) =>
-        set({
-          personaDetailId: id,
-          characterLibraryOpen: false,
-          characterDetailId: null,
-          lorebookDetailId: null,
-          presetDetailId: null,
-          connectionDetailId: null,
-          agentDetailId: null,
-          toolDetailId: null,
-          regexDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
-        }),
+        set(openDetailRouteState({ personaDetailId: id, characterLibraryOpen: false })),
       closePersonaDetail: () => set({ personaDetailId: null, editorDirty: false }),
       openRegexDetail: (id) =>
-        set({
-          regexDetailId: id,
-          personaDetailId: null,
-          characterLibraryOpen: false,
-          characterDetailId: null,
-          lorebookDetailId: null,
-          presetDetailId: null,
-          connectionDetailId: null,
-          agentDetailId: null,
-          toolDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
-        }),
+        set(openDetailRouteState({ regexDetailId: id, characterLibraryOpen: false })),
       closeRegexDetail: () => set({ regexDetailId: null, editorDirty: false }),
       openCharacterLibrary: () =>
         set({
+          ...CLEARED_DETAIL_IDS,
           characterLibraryOpen: true,
-          characterDetailId: null,
-          lorebookDetailId: null,
-          presetDetailId: null,
-          connectionDetailId: null,
-          agentDetailId: null,
-          toolDetailId: null,
-          personaDetailId: null,
-          regexDetailId: null,
           botBrowserOpen: false,
           editorDirty: false,
           rightPanelOpen: false,
@@ -953,34 +905,20 @@ export const useUIStore = create<UIState>()(
       closeCharacterLibrary: () => set({ characterLibraryOpen: false }),
       openBotBrowser: () =>
         set({
+          ...CLEARED_DETAIL_IDS,
           botBrowserOpen: true,
           gameAssetsBrowserOpen: false,
           characterLibraryOpen: false,
-          regexDetailId: null,
-          personaDetailId: null,
-          characterDetailId: null,
-          lorebookDetailId: null,
-          presetDetailId: null,
-          connectionDetailId: null,
-          agentDetailId: null,
-          toolDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
+          ...mobilePanelClosePatch(),
         }),
       closeBotBrowser: () => set({ botBrowserOpen: false }),
       openGameAssetsBrowser: () =>
         set({
+          ...CLEARED_DETAIL_IDS,
           gameAssetsBrowserOpen: true,
           botBrowserOpen: false,
           characterLibraryOpen: false,
-          regexDetailId: null,
-          personaDetailId: null,
-          characterDetailId: null,
-          lorebookDetailId: null,
-          presetDetailId: null,
-          connectionDetailId: null,
-          agentDetailId: null,
-          toolDetailId: null,
-          ...(window.innerWidth < 768 && { rightPanelOpen: false }),
+          ...mobilePanelClosePatch(),
         }),
       closeGameAssetsBrowser: () => set({ gameAssetsBrowserOpen: false }),
 
