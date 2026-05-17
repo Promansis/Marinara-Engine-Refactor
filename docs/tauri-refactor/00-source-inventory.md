@@ -113,9 +113,20 @@ Status: Complete.
 ### Phase 2 Slice 4 Chat Shell And Navigation
 
 Status: Complete.
+Review: Approved by human.
 
 - Mapped original `components/layout/ChatSidebar.tsx` chat navigation behavior into the migrated shell sidebar, preserving mode tabs, search, sort cycling, tag filters, chat row selection, grouped branch badges, folder read display, active-row highlighting, mobile close-on-select, and the user status footer.
 - Added feature-owned chat DTOs in `src/features/chats/types.ts` for the frontend read surface until Rust-owned DTO bindings replace them in the domain DTO phase.
 - Added Phase 2-safe chat API seams and hooks under `src/features/chats/api` and `src/features/chats/hooks`; these intentionally fail with explicit Rust chats backend errors instead of fake chat data or fake persistence.
 - Mapped active chat selection and unread-count clearing into `src/shared/stores/chat.store.ts`, including persisted active chat ID restoration for the navigation shell.
 - Wired the center shell placeholder to acknowledge selected chats while deferring message display, input, setup wizard, chat settings drawer, gallery/files drawers, branch mutation actions, folder mutations, delete actions, chat creation, connection/preset application, autonomous notifications, and all generation behavior to later reviewed slices.
+
+### Phase 2 Slice 5 Chat Message Display/Input UI
+
+Status: Complete.
+
+- Mapped the message display and draft input portions of original `components/chat/ConversationView.tsx`, `ConversationMessage.tsx`, `ConversationInput.tsx`, `ChatConversationSurface.tsx`, `ChatMessage.tsx`, `ChatInput.tsx`, and `ChatArea.tsx` into `src/features/chats/components`.
+- Added frontend-owned Phase 2 message DTOs and chat message hooks in `src/features/chats/types.ts` and `src/features/chats/hooks/use-chats.ts`; these keep the UI paths typed until Rust-owned DTO bindings replace them.
+- Extended `src/shared/stores/chat.store.ts` with draft input and minimal streaming display state needed by the migrated input/message surface.
+- Wired the center shell to render the selected chat's message display, unavailable-history state, draft input, copy/edit/delete/swipe controls, day separators, attachment previews, and explicit deferred errors for send/edit/delete/swipe actions.
+- Deferred real message persistence, generation, regeneration, cancellation, chat setup, chat settings drawer, branch selection, gallery/files drawers, slash commands, prompt preview, emoji/GIF/STT, translation, character/persona identity enrichment, autonomous effects, roleplay/game surfaces, and filesystem-backed attachments until their owning frontend and Rust backend slices.

@@ -16,6 +16,7 @@ import {
 } from "../../shared/stores/ui.store";
 import { cn } from "../../shared/lib/utils";
 import { CharacterLibraryView } from "../../features/characters/components/CharacterLibraryView";
+import { ChatConversationView } from "../../features/chats/components/ChatConversationView";
 import { useChatStore } from "../../shared/stores/chat.store";
 import { ChatSidebar } from "./ChatSidebar";
 import { RightPanel } from "./RightPanel";
@@ -254,26 +255,20 @@ export function AppShell() {
         ) : (
           <>
             <TopBar />
-            <div className="flex flex-1 flex-col items-center justify-center overflow-hidden px-6 text-center">
-              <div className="glass max-w-xl rounded-2xl p-6">
-                <p className="text-sm font-medium text-[var(--foreground)]">
-                  {characterDetailId
-                    ? "Character editor deferred"
-                    : personaDetailId
-                      ? "Persona editor deferred"
-                      : activeChatId
-                        ? "Chat display deferred"
-                        : "Frontend shell migrated"}
-                </p>
-                <p className="mt-2 text-xs leading-relaxed text-[var(--muted-foreground)]">
-                  {characterDetailId || personaDetailId
-                    ? "The library click path is wired. The editor UI moves in a later reviewed slice."
-                    : activeChatId
-                      ? "The chat navigation click path is wired. Message display, input, and generation move in later reviewed slices."
-                      : "Feature screens are intentionally deferred until their reviewed Phase 2 slices."}
-                </p>
+            {characterDetailId || personaDetailId ? (
+              <div className="flex flex-1 flex-col items-center justify-center overflow-hidden px-6 text-center">
+                <div className="glass max-w-xl rounded-2xl p-6">
+                  <p className="text-sm font-medium text-[var(--foreground)]">
+                    {characterDetailId ? "Character editor deferred" : "Persona editor deferred"}
+                  </p>
+                  <p className="mt-2 text-xs leading-relaxed text-[var(--muted-foreground)]">
+                    The library click path is wired. The editor UI moves in a later reviewed slice.
+                  </p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <ChatConversationView activeChatId={activeChatId} />
+            )}
           </>
         )}
       </main>

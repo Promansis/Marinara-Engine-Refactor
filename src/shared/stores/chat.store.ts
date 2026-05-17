@@ -11,8 +11,16 @@ interface ActiveChatSnapshot {
 interface ChatStore {
   activeChatId: string | null;
   activeChat: ActiveChatSnapshot | null;
+  currentInput: string;
+  inputDrafts: Map<string, string>;
+  isStreaming: boolean;
+  streamingChatId: string | null;
+  streamBuffer: string;
   unreadCounts: Map<string, number>;
   setActiveChatId: (id: string | null) => void;
+  setCurrentInput: (value: string) => void;
+  setInputDraft: (chatId: string, value: string) => void;
+  clearInputDraft: (chatId: string) => void;
   clearUnread: (chatId: string) => void;
   reset: () => void;
 }
@@ -26,6 +34,11 @@ export const useChatStore = create<ChatStore>((set) => ({
     }
   })(),
   activeChat: null,
+  currentInput: "",
+  inputDrafts: new Map(),
+  isStreaming: false,
+  streamingChatId: null,
+  streamBuffer: "",
   unreadCounts: new Map(),
   setActiveChatId: (id) => {
     set((state) => {
@@ -40,6 +53,20 @@ export const useChatStore = create<ChatStore>((set) => ({
       /* ignore */
     }
   },
+  setCurrentInput: (value) => set({ currentInput: value }),
+  setInputDraft: (chatId, value) =>
+    set((state) => {
+      const inputDrafts = new Map(state.inputDrafts);
+      inputDrafts.set(chatId, value);
+      return { inputDrafts };
+    }),
+  clearInputDraft: (chatId) =>
+    set((state) => {
+      if (!state.inputDrafts.has(chatId)) return state;
+      const inputDrafts = new Map(state.inputDrafts);
+      inputDrafts.delete(chatId);
+      return { inputDrafts };
+    }),
   clearUnread: (chatId) =>
     set((state) => {
       if (!state.unreadCounts.has(chatId)) return state;
@@ -48,7 +75,16 @@ export const useChatStore = create<ChatStore>((set) => ({
       return { unreadCounts };
     }),
   reset: () => {
-    set({ activeChatId: null, activeChat: null, unreadCounts: new Map() });
+    set({
+      activeChatId: null,
+      activeChat: null,
+      currentInput: "",
+      inputDrafts: new Map(),
+      isStreaming: false,
+      streamingChatId: null,
+      streamBuffer: "",
+      unreadCounts: new Map(),
+    });
     try {
       localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
     } catch {
