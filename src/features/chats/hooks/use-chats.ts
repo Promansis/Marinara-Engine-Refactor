@@ -70,6 +70,18 @@ export function useSetActiveSwipe(chatId: string | null) {
   });
 }
 
+export function useUpdateChatMetadata() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...metadata }: { id: string } & Record<string, unknown>) =>
+      api.patch<Chat>(`/chats/${id}/metadata`, metadata),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: chatKeys.detail(variables.id) });
+      qc.invalidateQueries({ queryKey: chatKeys.list() });
+    },
+  });
+}
+
 export function useCreateChat() {
   const qc = useQueryClient();
   return useMutation({

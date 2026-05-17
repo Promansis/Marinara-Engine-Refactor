@@ -154,3 +154,12 @@ Status: Complete.
 - Added a feature-owned API seam in `src/features/connections/api/connections-api.ts`; it intentionally fails with explicit Rust connections backend errors instead of fake connection data or fake persistence.
 - Wired connection row clicks to the existing center-shell detail placeholder so the navigation path is accounted for without moving the full editor.
 - Deferred `components/connections/ConnectionEditor.tsx`, `components/modals/CreateConnectionModal.tsx`, local sidecar controls, TTS settings card, provider tests, model discovery, secret persistence, image test generation, chat settings integration, and active connection persistence until their owning frontend and Rust backend slices.
+
+### Phase 2 Slice 8 Roleplay/Conversation UI
+
+Status: Complete.
+
+- Mapped the roleplay surface portions of original `components/chat/ChatRoleplaySurface.tsx`, `SceneBanner.tsx`, and `CyoaChoices.tsx` into `src/features/chats/components/RoleplayConversationView.tsx`, `RoleplaySceneBanner.tsx`, and `CyoaChoices.tsx`, preserving the background/overlay layout, roleplay toolbar affordances, scene banners, end-scene controls, combat entry affordance, CYOA choice display, animated transcript flow, and the existing chat input path.
+- Mapped active chat mode selection into `src/shared/stores/chat.store.ts` and `src/app/shell/ChatSidebar.tsx` so selected roleplay chats render the roleplay surface even before the detail query resolves.
+- Added a Phase 2-safe chat metadata mutation hook in `src/features/chats/hooks/use-chats.ts` for downstream roleplay panels; it intentionally uses the existing chats API seam and fails with explicit Rust backend errors instead of fake persistence.
+- Deferred full `RoleplayHUD.tsx`, `RoleplayHUDPanels.tsx`, `RoleplayHUDActionsMenu.tsx`, `ChatRoleplayPanels.tsx`, `ChatCommonOverlays.tsx`, `ChatBranchSelector.tsx`, `WeatherEffects.tsx`, `SpriteOverlay.tsx`, `SpriteSidebar.tsx`, `ExpressionPanel.tsx`, `EchoChamberPanel.tsx`, `SummaryPopover.tsx`, `EncounterModal.tsx`, chat files/gallery drawers, prompt peek, roleplay agents, scene forking/conclusion persistence, sprite placement, autonomous effects, lorebook activation scans, and generation/provider behavior until their owning frontend and Rust backend slices.

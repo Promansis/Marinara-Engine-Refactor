@@ -2,11 +2,13 @@ import { ChevronUp, Image as ImageIcon, Settings2 } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { cn } from "../../../shared/lib/utils";
+import { useChatStore } from "../../../shared/stores/chat.store";
 import { useUIStore } from "../../../shared/stores/ui.store";
 import { useChat, useChatMessages, useDeleteMessage, useSetActiveSwipe, useUpdateMessage } from "../hooks/use-chats";
 import type { Message } from "../types";
 import { ConversationInput } from "./ConversationInput";
 import { ConversationMessage } from "./ConversationMessage";
+import { RoleplayConversationView } from "./RoleplayConversationView";
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Chat data is waiting for the Rust chats backend slice.";
@@ -88,6 +90,7 @@ export function ChatConversationView({ activeChatId }: ChatConversationViewProps
   const messages = messagesQuery.data;
   const items = useMemo(() => buildItems(messages), [messages]);
   const chatName = chatQuery.data?.name ?? "selected chat";
+  const activeChatMode = useChatStore((s) => s.activeChat?.id === activeChatId ? s.activeChat.mode : undefined);
 
   const gradientStyle = useMemo(() => {
     const g = convoGradient[theme];
@@ -114,6 +117,10 @@ export function ChatConversationView({ activeChatId }: ChatConversationViewProps
         </div>
       </div>
     );
+  }
+
+  if ((chatQuery.data?.mode ?? activeChatMode) === "roleplay") {
+    return <RoleplayConversationView activeChatId={activeChatId} />;
   }
 
   return (

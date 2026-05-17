@@ -18,6 +18,7 @@ interface ChatStore {
   streamBuffer: string;
   unreadCounts: Map<string, number>;
   setActiveChatId: (id: string | null) => void;
+  setActiveChatSnapshot: (chat: ActiveChatSnapshot | null) => void;
   setCurrentInput: (value: string) => void;
   setInputDraft: (chatId: string, value: string) => void;
   clearInputDraft: (chatId: string) => void;
@@ -53,6 +54,11 @@ export const useChatStore = create<ChatStore>((set) => ({
       /* ignore */
     }
   },
+  setActiveChatSnapshot: (chat) =>
+    set((state) => ({
+      activeChat: chat,
+      activeChatId: chat?.id ?? state.activeChatId,
+    })),
   setCurrentInput: (value) => set({ currentInput: value }),
   setInputDraft: (chatId, value) =>
     set((state) => {
