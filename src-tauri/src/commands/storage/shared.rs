@@ -538,13 +538,3 @@ pub(crate) fn metadata_map(chat: &Value) -> Map<String, Value> {
         _ => Map::new(),
     }
 }
-
-pub(crate) fn parse_json_object_from_text(raw: &str) -> Option<Value> {
-    let cleaned = raw
-        .replace("```json", "")
-        .replace("```JSON", "")
-        .replace("```", "");
-    let first = cleaned.find('{')?;
-    let last = cleaned.rfind('}')?;
-    serde_json::from_str::<Value>(&cleaned[first..=last]).ok()
-}

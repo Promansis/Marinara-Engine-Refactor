@@ -3,7 +3,9 @@ use super::*;
 
 mod providers;
 
-pub(crate) use providers::generate_image_with_connection;
+pub(crate) use providers::{
+    generate_image_with_connection, generate_image_with_options, ImageGenerationOptions,
+};
 
 pub(crate) fn avatar_generation_prompt_id(name: &str) -> String {
     let slug: String = name
@@ -92,6 +94,36 @@ pub(crate) fn prompt_override(body: &Value, id: &str) -> Option<String> {
         })
 }
 
+pub(crate) fn image_generation_options(body: &Value) -> ImageGenerationOptions {
+    let negative_prompt = body
+        .get("negativePrompt")
+        .or_else(|| body.get("negative_prompt"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let mut reference_images = Vec::new();
+    if let Some(value) = body.get("referenceImage").and_then(Value::as_str) {
+        if !value.trim().is_empty() {
+            reference_images.push(value.trim().to_string());
+        }
+    }
+    if let Some(items) = body.get("referenceImages").and_then(Value::as_array) {
+        reference_images.extend(
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+        );
+    }
+    ImageGenerationOptions {
+        negative_prompt,
+        reference_images,
+    }
+}
+
 pub(crate) fn percent_encode_component(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(value.len());
@@ -108,44 +140,6 @@ pub(crate) fn percent_encode_component(value: &str) -> String {
         }
     }
     encoded
-}
-
-pub(crate) async fn generate_pollinations_image(
-    prompt: &str,
-    width: u64,
-    height: u64,
-) -> AppResult<(String, String)> {
-    let encoded_prompt = percent_encode_component(prompt);
-    let seed = now_millis() % 1_000_000_000;
-    let url = format!(
-        "https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&seed={seed}"
-    );
-    let response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .build()
-        .map_err(|error| AppError::new("image_client_error", error.to_string()))?
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(AppError::new(
-            "image_provider_error",
-            format!("Pollinations returned HTTP {status}"),
-        ));
-    }
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("image/jpeg")
-        .to_string();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| AppError::new("image_response_error", error.to_string()))?;
-    Ok((general_purpose::STANDARD.encode(bytes), content_type))
 }
 
 pub(crate) async fn avatar_generation(state: &AppState, body: Value) -> AppResult<Value> {
@@ -166,7 +160,7 @@ pub(crate) async fn avatar_generation(state: &AppState, body: Value) -> AppResul
     let width = image_dimension(&body, "width", 768);
     let height = image_dimension(&body, "height", 1024);
     let (base64, mime_type) =
-        generate_image_with_connection(&connection, &prompt, width, height).await?;
+        generate_image_with_options(&connection, &prompt, width, height, image_generation_options(&body)).await?;
     Ok(json!({
         "image": format!("data:{mime_type};base64,{base64}"),
         "prompt": prompt
@@ -180,7 +174,7 @@ pub(crate) async fn generate_image(state: &AppState, body: Value) -> AppResult<V
     let height = image_dimension(&body, "height", 1024);
     let connection = get_required(state, "connections", &connection_id)?;
     let (base64, mime_type) =
-        generate_image_with_connection(&connection, &prompt, width, height).await?;
+        generate_image_with_options(&connection, &prompt, width, height, image_generation_options(&body)).await?;
     Ok(json!({
         "base64": base64,
         "mimeType": mime_type,

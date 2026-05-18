@@ -26,6 +26,13 @@ export interface GenerationEngineDeps {
   events?: EventGateway;
 }
 
+export interface RetryAgentsInput extends JsonRecord {
+  chatId: string;
+  connectionId?: string | null;
+  agentTypes?: string[];
+  options?: Record<string, unknown>;
+}
+
 async function saveUserMessage(storage: StorageGateway, input: StartGenerationInput): Promise<string> {
   const raw = readString(input.message).trim();
   if (!raw || input.impersonate === true || readString(input.regenerateMessageId).trim()) return "";
@@ -120,6 +127,64 @@ async function saveAssistantMessage(args: {
 
 function messageId(saved: unknown): string | null {
   return isRecord(saved) ? readString(saved.id) || null : null;
+}
+
+function targetAssistantMessage(messages: JsonRecord[], options: Record<string, unknown> = {}): JsonRecord | null {
+  const requestedId = readString(options.forMessageId).trim();
+  if (requestedId) {
+    return messages.find((message) => readString(message.id) === requestedId) ?? null;
+  }
+  return [...messages].reverse().find((message) => readString(message.role) === "assistant") ?? null;
+}
+
+export async function retryGenerationAgents(
+  deps: GenerationEngineDeps,
+  input: RetryAgentsInput,
+  signal?: AbortSignal,
+): Promise<AgentResult[]> {
+  const chatId = readString(input.chatId).trim();
+  if (!chatId) throw new Error("chatId is required");
+  const agentTypes = Array.isArray(input.agentTypes)
+    ? new Set(input.agentTypes.map((type) => readString(type).trim()).filter(Boolean))
+    : new Set<string>();
+  const chat = requireRecord(await deps.storage.get("chats", chatId), "Chat");
+  const connection = await resolveGenerationConnection(deps.storage, chat, input);
+  const storedMessages = await loadChatMessages(deps.storage, chatId);
+  const assembly = await assembleGenerationPrompt(deps.storage, {
+    chat,
+    storedMessages,
+    connection,
+    request: input,
+    latestUserInput: "",
+  });
+  const results: AgentResult[] = [];
+  const runtime = await createGenerationAgentRuntime(
+    { storage: deps.storage, llm: deps.llm },
+    {
+      chat,
+      connection,
+      storedMessages,
+      characters: assembly.characters,
+      persona: assembly.persona,
+      activatedLorebookEntries: assembly.activatedLorebookEntries,
+      chatSummary: assembly.chatSummary,
+      agentTypes,
+      signal,
+    },
+    (result) => results.push(result),
+  );
+  const target = targetAssistantMessage(storedMessages, input.options);
+  const mainResponse = target ? readString(target.content) : "";
+  results.push(...(await runtime.runParallel()));
+  results.push(...(await runtime.runPost(mainResponse)));
+
+  const unique = new Map<string, AgentResult>();
+  for (const result of [...runtime.preResults, ...results]) {
+    unique.set(resultKey(result), result);
+  }
+  const finalResults = [...unique.values()];
+  await persistAgentResults(deps.storage, chatId, target ? readString(target.id) || null : null, finalResults);
+  return finalResults;
 }
 
 export async function* startGeneration(

@@ -37,7 +37,7 @@ const EXEC_TYPES = [
 ] as const;
 
 const SCRIPT_TOOLS_DISABLED_MESSAGE =
-  "Script tools are disabled. Set CUSTOM_TOOL_SCRIPT_ENABLED=true in your .env and restart Marinara to enable local script tools.";
+  "Script tools are disabled in the native Tauri runtime. Use Static Result or Webhook custom tools.";
 
 // ═══════════════════════════════════════════════
 //  Main Editor
@@ -481,11 +481,9 @@ export function ToolEditor() {
               <div className="mt-3 flex gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-200">
                 <AlertCircle size="0.875rem" className="mt-0.5 shrink-0" />
                 <div>
-                  <div className="font-medium">Script tools are disabled on this server.</div>
+                  <div className="font-medium">Script tools are disabled in this desktop build.</div>
                   <div className="mt-1 text-amber-100/80">
-                    Set <code className="rounded bg-black/20 px-1">CUSTOM_TOOL_SCRIPT_ENABLED=true</code> in{" "}
-                    <code className="rounded bg-black/20 px-1">.env</code> and restart Marinara before saving Script
-                    tools.
+                    Static Result and Webhook tools are available for agent tool use.
                   </div>
                 </div>
               </div>

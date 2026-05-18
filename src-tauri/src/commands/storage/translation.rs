@@ -34,13 +34,20 @@ async fn translate_with_ai(
             marinara_llm::LlmMessage {
                 role: "system".to_string(),
                 content: "You are a translator. Translate accurately, preserving markdown, formatting, names, and action asterisks. Output only the translated text.".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
             },
             marinara_llm::LlmMessage {
                 role: "user".to_string(),
                 content: format!("Translate the following text to {target_language}:\n\n{text}"),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
             },
         ],
         parameters: json!({ "temperature": 0.3 }),
+        tools: Vec::new(),
     };
     marinara_llm::complete(request).await.map(|value| value.trim().to_string())
 }

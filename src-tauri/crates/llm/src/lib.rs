@@ -7,6 +7,12 @@ use serde_json::{json, Value};
 pub struct LlmMessage {
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -25,16 +31,33 @@ pub struct LlmRequest {
     pub messages: Vec<LlmMessage>,
     #[serde(default)]
     pub parameters: Value,
+    #[serde(default)]
+    pub tools: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LlmCompletion {
+    pub content: String,
+    #[serde(rename = "toolCalls")]
+    pub tool_calls: Vec<Value>,
 }
 
 pub async fn complete(request: LlmRequest) -> AppResult<String> {
+    Ok(complete_rich(request).await?.content)
+}
+
+pub async fn complete_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
     match request.connection.provider.as_str() {
-        "anthropic" => complete_anthropic(request).await,
-        "google" | "google_vertex" => complete_google(request).await,
+        "anthropic" => complete_anthropic(request)
+            .await
+            .map(|content| LlmCompletion { content, tool_calls: Vec::new() }),
+        "google" | "google_vertex" => complete_google(request)
+            .await
+            .map(|content| LlmCompletion { content, tool_calls: Vec::new() }),
         "openai_chatgpt" | "claude_subscription" => Err(AppError::invalid_input(
             "This local-session provider is not available in the native Tauri runtime. Use an API-backed provider connection.",
         )),
-        _ => complete_openai_compatible(request).await,
+        _ => complete_openai_compatible_rich(request).await,
     }
 }
 
@@ -76,14 +99,14 @@ fn ensure_url_allowed(url: &str) -> AppResult<()> {
     }
 }
 
-async fn complete_openai_compatible(request: LlmRequest) -> AppResult<String> {
+async fn complete_openai_compatible_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
     let base = base_url(&request.connection.provider, &request.connection.base_url);
     let url = format!("{base}/chat/completions");
     ensure_url_allowed(&url)?;
     let messages: Vec<Value> = request
         .messages
         .iter()
-        .map(|message| json!({ "role": message.role, "content": message.content }))
+        .map(openai_message)
         .collect();
     let mut body = json!({
         "model": request.connection.model,
@@ -91,6 +114,16 @@ async fn complete_openai_compatible(request: LlmRequest) -> AppResult<String> {
         "stream": false,
         "max_tokens": max_tokens(&request.parameters, 1024),
     });
+    if !request.tools.is_empty() {
+        body["tools"] = Value::Array(
+            request
+                .tools
+                .iter()
+                .map(|tool| json!({ "type": "function", "function": tool }))
+                .collect(),
+        );
+        body["tool_choice"] = json!("auto");
+    }
     if let Some(temp) = temperature(&request.parameters) {
         body["temperature"] = json!(temp);
     }
@@ -106,16 +139,28 @@ async fn complete_openai_compatible(request: LlmRequest) -> AppResult<String> {
         .send()
         .await
         .map_err(|error| AppError::new("llm_network_error", error.to_string()))?;
-    parse_json_response(response, |json| {
-        json.get("choices")
-            .and_then(Value::as_array)
-            .and_then(|choices| choices.first())
-            .and_then(|choice| choice.get("message"))
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-    })
+    parse_json_response_rich(response)
     .await
+}
+
+fn openai_message(message: &LlmMessage) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("role".to_string(), json!(message.role));
+    object.insert("content".to_string(), json!(message.content));
+    if let Some(name) = message.name.as_ref().filter(|value| !value.trim().is_empty()) {
+        object.insert("name".to_string(), json!(name));
+    }
+    if let Some(tool_call_id) = message
+        .tool_call_id
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        object.insert("tool_call_id".to_string(), json!(tool_call_id));
+    }
+    if let Some(tool_calls) = message.tool_calls.as_ref() {
+        object.insert("tool_calls".to_string(), tool_calls.clone());
+    }
+    Value::Object(object)
 }
 
 async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
@@ -225,5 +270,81 @@ where
             "Provider response did not contain assistant text",
             json,
         )
+    })
+}
+
+async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmCompletion> {
+    let status = response.status();
+    let json: Value = response
+        .json()
+        .await
+        .map_err(|error| AppError::new("llm_response_error", error.to_string()))?;
+    if !status.is_success() {
+        return Err(AppError::with_details(
+            "llm_provider_error",
+            format!("Provider returned HTTP {status}"),
+            json,
+        ));
+    }
+    let message = json
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .ok_or_else(|| {
+            AppError::with_details(
+                "llm_response_error",
+                "Provider response did not contain an assistant message",
+                json.clone(),
+            )
+        })?;
+    let content = message
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let tool_calls = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(normalize_tool_call)
+        .collect::<Vec<_>>();
+    if content.is_empty() && tool_calls.is_empty() {
+        return Err(AppError::with_details(
+            "llm_response_error",
+            "Provider response did not contain assistant text or tool calls",
+            json,
+        ));
+    }
+    Ok(LlmCompletion { content, tool_calls })
+}
+
+fn normalize_tool_call(call: Value) -> Value {
+    let function = call
+        .get("function")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let name = function
+        .get("name")
+        .or_else(|| call.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let arguments = function
+        .get("arguments")
+        .or_else(|| call.get("arguments"))
+        .and_then(Value::as_str)
+        .unwrap_or("{}")
+        .to_string();
+    json!({
+        "id": call.get("id").and_then(Value::as_str).unwrap_or("").to_string(),
+        "name": name,
+        "arguments": arguments,
+        "function": {
+            "name": name,
+            "arguments": arguments
+        }
     })
 }

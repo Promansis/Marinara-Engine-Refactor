@@ -7,10 +7,9 @@ use super::bot_browser::*;
 use super::chat_presets::*;
 use super::characters::*;
 use super::chats::*;
-use super::encounter::*;
+use super::custom_tools::*;
 use super::exports::*;
 use super::fonts::*;
-use super::game::*;
 use super::game_assets::*;
 use super::generation::*;
 use super::http::*;
@@ -556,12 +555,10 @@ pub(crate) async fn route_request(
             agent_memory(state, method, agent_type, chat_id, body)
         }
         ["agents", "echo-messages", chat_id] => echo_messages(state, method, chat_id),
-        ["agents", "retry"] if method == "POST" => retry_agents(state, body),
         ["agents"] => collection_root(state, method, "agents", body),
         ["agents", id] => collection_item_or_action(state, method, "agents", id, None, body),
-        ["custom-tools", "capabilities"] if method == "GET" => {
-            Ok(json!({ "scriptExecutionEnabled": false }))
-        }
+        ["custom-tools", "capabilities"] if method == "GET" => Ok(custom_tool_capabilities()),
+        ["custom-tools", "execute"] if method == "POST" => execute_custom_tool(state, body).await,
         ["regex-scripts", "reorder"] if method == "PUT" => {
             reorder_collection(state, "regex-scripts", "scriptIds", body)
         }

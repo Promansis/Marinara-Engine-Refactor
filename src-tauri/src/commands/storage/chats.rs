@@ -15,10 +15,6 @@ pub(crate) fn messages_for_chat(state: &AppState, chat_id: &str) -> AppResult<Ve
     Ok(rows)
 }
 
-fn chat_character_ids(chat: &Value) -> Vec<String> {
-    string_array_from_value(chat.get("characterIds"))
-}
-
 fn message_content(message: &Value) -> String {
     message
         .get("content")
@@ -591,97 +587,6 @@ pub(crate) fn backfill_summaries(state: &AppState, chat_id: &str, body: Value) -
         "missingDayCount": generated_days.len(),
         "processedDayCount": generated_days.len(),
         "remainingMissingDayCount": 0
-    }))
-}
-
-pub(crate) fn conversation_status(state: &AppState, chat_id: &str) -> AppResult<Value> {
-    let chat = get_required(state, "chats", chat_id)?;
-    let meta = metadata_map(&chat);
-    let schedules = meta
-        .get("characterSchedules")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let mut statuses = Map::new();
-    for character_id in chat_character_ids(&chat) {
-        let schedule = schedules.get(&character_id).cloned();
-        statuses.insert(
-            character_id,
-            json!({
-                "status": "online",
-                "activity": if schedule.is_some() { "scheduled" } else { "unknown (no schedule)" },
-                "schedule": schedule
-            }),
-        );
-    }
-    Ok(json!({ "statuses": statuses, "needsRefresh": false }))
-}
-
-pub(crate) fn autonomous_check(state: &AppState, body: Value) -> AppResult<Value> {
-    let chat_id = required_string(&body, "chatId")?;
-    let chat = get_required(state, "chats", chat_id)?;
-    let meta = metadata_map(&chat);
-    if !meta
-        .get("autonomousMessages")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Ok(
-            json!({ "shouldTrigger": false, "characterIds": [], "reason": "disabled", "inactivityMs": 0 }),
-        );
-    }
-    if body.get("userStatus").and_then(Value::as_str) == Some("dnd") {
-        return Ok(
-            json!({ "shouldTrigger": false, "characterIds": [], "reason": "user_dnd", "inactivityMs": 0 }),
-        );
-    }
-    if meta.get("sceneStatus").and_then(Value::as_str) == Some("active") {
-        return Ok(
-            json!({ "shouldTrigger": false, "characterIds": [], "reason": "scene_active", "inactivityMs": 0 }),
-        );
-    }
-    let messages = messages_for_chat(state, chat_id)?;
-    let last = messages.last();
-    let character_ids = chat_character_ids(&chat);
-    if last
-        .and_then(|message| message.get("role"))
-        .and_then(Value::as_str)
-        == Some("user")
-        && !character_ids.is_empty()
-    {
-        return Ok(json!({
-            "shouldTrigger": true,
-            "characterIds": [character_ids[0].clone()],
-            "reason": "user_inactivity",
-            "inactivityMs": 0
-        }));
-    }
-    Ok(
-        json!({ "shouldTrigger": false, "characterIds": [], "reason": "waiting", "inactivityMs": 0 }),
-    )
-}
-
-pub(crate) fn busy_delay(state: &AppState, body: Value) -> AppResult<Value> {
-    let chat_id = required_string(&body, "chatId")?;
-    let character_id = required_string(&body, "characterId")?;
-    let chat = get_required(state, "chats", chat_id)?;
-    let meta = metadata_map(&chat);
-    let schedule = meta
-        .get("characterSchedules")
-        .and_then(Value::as_object)
-        .and_then(|schedules| schedules.get(character_id));
-    let delay_minutes = schedule
-        .and_then(|schedule| {
-            schedule
-                .get("idleResponseDelayMinutes")
-                .or_else(|| schedule.get("dndResponseDelayMinutes"))
-        })
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    Ok(json!({
-        "delayMs": delay_minutes * 60_000,
-        "status": "online",
-        "activity": if schedule.is_some() { "scheduled" } else { "unknown" }
     }))
 }
 

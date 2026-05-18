@@ -151,6 +151,7 @@ export function ConnectionEditor() {
   const [localOpenrouterProvider, setLocalOpenrouterProvider] = useState("");
   const [localImageGenerationSource, setLocalImageGenerationSource] = useState("");
   const [localComfyuiWorkflow, setLocalComfyuiWorkflow] = useState("");
+  const [localImageEndpointId, setLocalImageEndpointId] = useState("");
   const [localImageService, setLocalImageService] = useState<string | null>(null);
   const [localMaxTokensOverride, setLocalMaxTokensOverride] = useState<number | null>(null);
   const [localClaudeFastMode, setLocalClaudeFastMode] = useState(false);
@@ -260,6 +261,7 @@ export function ConnectionEditor() {
       : null;
     setLocalImageGenerationSource(imageGenerationSource);
     setLocalComfyuiWorkflow((c.comfyuiWorkflow as string) ?? "");
+    setLocalImageEndpointId((c.imageEndpointId as string) ?? "");
     setLocalImageService(imageService);
     setLocalMaxTokensOverride(typeof c.maxTokensOverride === "number" ? (c.maxTokensOverride as number) : null);
     setLocalClaudeFastMode(c.claudeFastMode === "true" || c.claudeFastMode === true);
@@ -402,6 +404,7 @@ export function ConnectionEditor() {
       imageGenerationSource:
         localProvider === "image_generation" ? localImageGenerationSource || localImageService || null : null,
       comfyuiWorkflow: localComfyuiWorkflow || null,
+      imageEndpointId: localProvider === "image_generation" ? localImageEndpointId || null : null,
       imageService:
         localProvider === "image_generation" ? localImageGenerationSource || localImageService || null : null,
       maxTokensOverride: localMaxTokensOverride ?? null,
@@ -456,6 +459,7 @@ export function ConnectionEditor() {
     localOpenrouterProvider,
     localImageGenerationSource,
     localComfyuiWorkflow,
+    localImageEndpointId,
     localImageService,
     localMaxTokensOverride,
     localClaudeFastMode,
@@ -1077,6 +1081,28 @@ export function ConnectionEditor() {
             </FieldGroup>
           )}
 
+          {localProvider === "image_generation" && selectedImageService === "runpod_comfyui" && (
+            <FieldGroup
+              label="RunPod Endpoint ID"
+              icon={<Server size="0.875rem" className="text-sky-400" />}
+              help="The RunPod serverless endpoint ID that will receive the ComfyUI workflow."
+            >
+              <input
+                value={localImageEndpointId}
+                onChange={(e) => {
+                  setLocalImageEndpointId(e.target.value);
+                  markDirty();
+                }}
+                className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm font-mono ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                placeholder="abc123def456"
+              />
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                Marinara calls <code>/run</code> and polls <code>/status</code> on this endpoint using the Base URL
+                above.
+              </p>
+            </FieldGroup>
+          )}
+
           {/* ── Model Selection ── */}
           <FieldGroup
             label="Model"
@@ -1320,11 +1346,16 @@ export function ConnectionEditor() {
           </FieldGroup>
 
           {/* ── ComfyUI Workflow ── */}
-          {localProvider === "image_generation" && selectedImageService === "comfyui" && (
+          {localProvider === "image_generation" &&
+            (selectedImageService === "comfyui" || selectedImageService === "runpod_comfyui") && (
             <FieldGroup
-              label="ComfyUI Workflow (Optional)"
+              label={selectedImageService === "runpod_comfyui" ? "ComfyUI Workflow" : "ComfyUI Workflow (Optional)"}
               icon={<Zap size="0.875rem" className="text-sky-400" />}
-              help="Paste a custom ComfyUI workflow JSON (API format). Use placeholders like %prompt%, %negative_prompt%, %width%, %height%, %seed%, %model%, %steps%, %cfg%, %sampler%, %scheduler%, and %denoise%. Leave empty to use the built-in default txt2img workflow."
+              help={
+                selectedImageService === "runpod_comfyui"
+                  ? "RunPod requires a ComfyUI workflow JSON in API format. Use placeholders like %prompt%, %negative_prompt%, %width%, %height%, %seed%, %model%, %steps%, %cfg%, %sampler%, %scheduler%, and %denoise%."
+                  : "Paste a custom ComfyUI workflow JSON (API format). Use placeholders like %prompt%, %negative_prompt%, %width%, %height%, %seed%, %model%, %steps%, %cfg%, %sampler%, %scheduler%, and %denoise%. Leave empty to use the built-in default txt2img workflow."
+              }
             >
               <textarea
                 ref={comfyWorkflowTextareaRef}

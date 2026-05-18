@@ -42,18 +42,6 @@ const HOME_FAQ_ITEMS: HomeFaqItem[] = [
     ],
   },
   {
-    id: "sidecar-cpu-fallback",
-    category: "Top Issue",
-    question: "I saw '[sidecar] Startup with max GPU offload failed, retrying with CPU fallback'. Is that normal?",
-    answer:
-      "Usually yes. Marinara's local sidecar is meant to live on CPU and RAM so your main RP model can keep the GPU and VRAM.",
-    bullets: [
-      "A fallback message does not automatically mean anything is broken.",
-      "The sidecar is there for helpers and utility tasks, not to compete with your main model for VRAM.",
-      "Treat it as a problem only if the sidecar never recovers or keeps crashing instead of settling on CPU fallback.",
-    ],
-  },
-  {
     id: "antivirus-installer",
     category: "Setup",
     question: "My antivirus flagged the installer or deleted files. Is Marinara safe?",
@@ -128,18 +116,18 @@ const HOME_FAQ_ITEMS: HomeFaqItem[] = [
     bullets: [
       "If you can fit it, go for dense 31B. Otherwise the MoE 26B A3B tier is the next best bet.",
       "Q4 and better quants are usually the sweet spot.",
-      "Very small E2B or E4B class models are fine for helpers and sidecars, but not ideal for serious RP.",
+      "Very small E2B or E4B class models are fine for lightweight helper tasks, but not ideal for serious RP.",
     ],
   },
   {
     id: "bigger-agent-model",
     category: "Connections",
-    question: "How do I use a bigger model for agents instead of the local sidecar?",
+    question: "How do I use a bigger model for agents?",
     answer:
       "Create a normal connection to your own Kobold, llama.cpp, or compatible endpoint and mark it for agent use.",
     bullets: [
       "The switch lives on the connection itself.",
-      "Once enabled, agents can use that remote model instead of the local sidecar path.",
+      "Once enabled, agents can use that model for background work.",
     ],
   },
   {
@@ -468,7 +456,7 @@ export function HomeFaq() {
                   </p>
                   <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]/85">
                     The biggest repeat problems are Game Mode model choice, silent agent failures from low max response
-                    length, and confusion about the local sidecar using CPU instead of the GPU.
+                    length, and stale browser/app state after an update.
                   </p>
                 </div>
               </div>

@@ -1,7 +1,15 @@
 import type { AgentContext, AgentResult } from "@marinara-engine/shared";
 import type { LlmGateway, LlmMessage, StorageGateway } from "../capabilities";
-import type { BaseLLMProvider, ChatCompleteOptions, ChatCompleteResult, ChatMessage } from "../generation-core/llm/base-provider";
+import type {
+  BaseLLMProvider,
+  ChatCompleteOptions,
+  ChatCompleteResult,
+  ChatMessage,
+  LLMToolCall,
+  LLMToolDefinition,
+} from "../generation-core/llm/base-provider";
 import { createAgentPipeline, type AgentInjection, type ResolvedAgent } from "../agents-runtime/pipeline/agent-pipeline";
+import type { AgentToolContext } from "../agents-runtime/executor/agent-executor";
 import type { GenerationCharacterContext, GenerationPersonaContext } from "./prompt-assembly";
 import { boolish, hiddenFromAi, isRecord, parseRecord, readString, type JsonRecord } from "./runtime-records";
 
@@ -14,6 +22,7 @@ export interface GenerationAgentRuntimeInput {
   activatedLorebookEntries: Array<{ id: string; name: string; content: string; tag: string }>;
   chatSummary: string | null;
   signal?: AbortSignal;
+  agentTypes?: Set<string>;
 }
 
 export interface GenerationAgentRuntime {
@@ -39,7 +48,10 @@ function llmProvider(llm: LlmGateway, connectionId: string | null): BaseLLMProvi
           message.role === "system" || message.role === "assistant" || message.role === "tool" ? message.role : "user",
         content: message.content,
         name: typeof message.name === "string" ? message.name : undefined,
+        tool_call_id: typeof message.tool_call_id === "string" ? message.tool_call_id : undefined,
+        tool_calls: Array.isArray(message.tool_calls) ? message.tool_calls : undefined,
       }));
+      const toolCalls: LLMToolCall[] = [];
       for await (const chunk of llm.stream(
         {
           connectionId,
@@ -56,9 +68,40 @@ function llmProvider(llm: LlmGateway, connectionId: string | null): BaseLLMProvi
         if (chunk.type === "token" && chunk.text) {
           content += chunk.text;
           options.onToken?.(chunk.text);
+        } else if (chunk.type === "tool_call") {
+          const toolCall = normalizeToolCall(chunk.data);
+          if (toolCall) toolCalls.push(toolCall);
         }
       }
-      return { content };
+      return { content, toolCalls };
+    },
+  };
+}
+
+interface CustomToolRecord extends JsonRecord {
+  name: string;
+  description: string;
+  parametersSchema: unknown;
+  executionType: string;
+  webhookUrl: string | null;
+  staticResult: string | null;
+  scriptBody: string | null;
+  enabled: string | boolean;
+}
+
+function normalizeToolCall(value: unknown): LLMToolCall | null {
+  if (!isRecord(value)) return null;
+  const rawFunction = isRecord(value.function) ? value.function : value;
+  const name = readString(rawFunction.name || value.name).trim();
+  if (!name) return null;
+  const args = readString(rawFunction.arguments || value.arguments, "{}");
+  return {
+    id: readString(value.id) || `tool-${name}-${Date.now().toString(36)}`,
+    name,
+    arguments: args,
+    function: {
+      name,
+      arguments: args,
     },
   };
 }
@@ -70,6 +113,10 @@ function agentSettings(agent: JsonRecord): Record<string, unknown> {
 function normalizePhase(agent: JsonRecord): string {
   const phase = readString(agent.phase || agentSettings(agent).phase || "pre_generation");
   return phase.replace(/-/g, "_");
+}
+
+function isDeferredSidecarConnectionId(value: string): boolean {
+  return value === "__local_sidecar__" || value === "sidecar:local" || value.startsWith("sidecar");
 }
 
 async function loadConnection(storage: StorageGateway, connectionId: string | null, fallback: JsonRecord) {
@@ -91,6 +138,95 @@ async function loadAgentMemory(storage: StorageGateway, agentId: string, chatId:
   return memory;
 }
 
+function enabledToolNames(settings: Record<string, unknown>): string[] {
+  const value = settings.enabledTools;
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => readString(item).trim()).filter(Boolean);
+}
+
+function parseToolParameters(value: unknown): unknown {
+  if (!value) return { type: "object", properties: {} };
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return { type: "object", properties: {} };
+    }
+  }
+  return value;
+}
+
+function customToolRecord(row: JsonRecord): CustomToolRecord | null {
+  const name = readString(row.name).trim();
+  if (!name || !boolish(row.enabled, false)) return null;
+  const executionType = readString(row.executionType, "static");
+  if (executionType === "script") return null;
+  return {
+    ...row,
+    name,
+    description: readString(row.description),
+    parametersSchema: parseToolParameters(row.parametersSchema),
+    executionType,
+    webhookUrl: readString(row.webhookUrl).trim() || null,
+    staticResult: readString(row.staticResult),
+    scriptBody: readString(row.scriptBody),
+    enabled: row.enabled as string | boolean,
+  };
+}
+
+async function loadCustomTools(storage: StorageGateway): Promise<Map<string, CustomToolRecord>> {
+  const tools = new Map<string, CustomToolRecord>();
+  for (const row of await storage.list<JsonRecord>("custom-tools")) {
+    const tool = customToolRecord(row);
+    if (tool) tools.set(tool.name, tool);
+  }
+  return tools;
+}
+
+function customToolDefinition(tool: CustomToolRecord): LLMToolDefinition {
+  return {
+    name: tool.name,
+    description: tool.description || `Run custom tool ${tool.name}.`,
+    parameters: tool.parametersSchema,
+  };
+}
+
+function stringifyToolResult(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (isRecord(value) && typeof value.result === "string") return value.result;
+  return JSON.stringify(value ?? null);
+}
+
+function buildCustomToolContext(
+  storage: StorageGateway,
+  settings: Record<string, unknown>,
+  customTools: Map<string, CustomToolRecord>,
+): AgentToolContext | undefined {
+  const selected = enabledToolNames(settings)
+    .map((name) => customTools.get(name))
+    .filter((tool): tool is CustomToolRecord => !!tool);
+  if (selected.length === 0) return undefined;
+
+  return {
+    tools: selected.map(customToolDefinition),
+    executeToolCall: async (call: LLMToolCall) => {
+      const toolName = call.function?.name || call.name;
+      let args: unknown = {};
+      try {
+        args = JSON.parse(call.function?.arguments || call.arguments || "{}");
+      } catch {
+        args = {};
+      }
+      return stringifyToolResult(
+        await storage.request("POST", "/custom-tools/execute", {
+          toolName,
+          arguments: args,
+        }),
+      );
+    },
+  };
+}
+
 function parseMaybeJson(value: string): unknown {
   try {
     return JSON.parse(value);
@@ -102,7 +238,13 @@ function parseMaybeJson(value: string): unknown {
 async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput): Promise<ResolvedAgent[]> {
   const rows = (await deps.storage.list<JsonRecord>("agents"))
     .filter((agent) => boolish(agent.enabled, false))
-    .filter((agent) => !readString(agent.connectionId).startsWith("sidecar"));
+    .filter((agent) => !isDeferredSidecarConnectionId(readString(agent.connectionId)))
+    .filter((agent) => {
+      if (!input.agentTypes || input.agentTypes.size === 0) return true;
+      const type = readString(agent.type || agent.agentType);
+      return input.agentTypes.has(type);
+    });
+  const customTools = await loadCustomTools(deps.storage);
   const resolved: ResolvedAgent[] = [];
   for (const agent of rows) {
     const settings = agentSettings(agent);
@@ -121,7 +263,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
       provider: llmProvider(deps.llm, connectionId),
       model,
       maxParallelJobs: typeof settings.maxParallelJobs === "number" ? settings.maxParallelJobs : undefined,
-      toolContext: undefined,
+      toolContext: buildCustomToolContext(deps.storage, settings, customTools),
     });
   }
   return resolved;

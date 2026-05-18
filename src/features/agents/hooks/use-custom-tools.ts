@@ -19,7 +19,10 @@ export interface CustomToolRow {
 }
 
 export interface CustomToolCapabilities {
+  staticResults?: boolean;
+  webhooks?: boolean;
   scriptExecutionEnabled: boolean;
+  scriptDisabledReason?: string;
 }
 
 export function isCustomToolSelectable(tool: CustomToolRow, capabilities?: CustomToolCapabilities | null): boolean {

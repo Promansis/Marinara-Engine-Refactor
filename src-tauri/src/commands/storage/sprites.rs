@@ -1,4 +1,4 @@
-use super::images::{generate_pollinations_image, prompt_override};
+use super::images::{generate_image_with_options, image_generation_options, prompt_override};
 use super::shared::*;
 use super::*;
 
@@ -81,6 +81,9 @@ pub(crate) async fn generate_sprite_sheet_preview(
 
 pub(crate) async fn generate_sprite_sheet(state: &AppState, body: Value) -> AppResult<Value> {
     validate_sprite_generation_body(state, &body)?;
+    let connection_id = required_string(&body, "connectionId")?;
+    let connection = get_required(state, "connections", connection_id)?;
+    let image_options = image_generation_options(&body);
     let plan = build_sprite_plan(&body);
     let reference_note = body
         .get("referenceImages")
@@ -97,7 +100,13 @@ pub(crate) async fn generate_sprite_sheet(state: &AppState, body: Value) -> AppR
             let prompt = prompt_override(&body, &prompt_id).unwrap_or_else(|| {
                 single_sprite_prompt(&plan.sprite_type, &plan.appearance, expression, &body)
             });
-            match generate_pollinations_image(&format!("{prompt}{reference_note}"), 1024, 1024)
+            match generate_image_with_options(
+                &connection,
+                &format!("{prompt}{reference_note}"),
+                1024,
+                1024,
+                image_options.clone(),
+            )
                 .await
             {
                 Ok((base64, _mime_type)) => {
@@ -136,10 +145,12 @@ pub(crate) async fn generate_sprite_sheet(state: &AppState, body: Value) -> AppR
         &format!("{}x{}-{}", plan.cols, plan.rows, plan.expressions.join(",")),
     );
     let prompt = prompt_override(&body, &prompt_id).unwrap_or_else(|| plan.prompt.clone());
-    let (sheet_base64, _mime_type) = generate_pollinations_image(
+    let (sheet_base64, _mime_type) = generate_image_with_options(
+        &connection,
         &format!("{prompt}{reference_note}"),
         plan.sheet_width as u64,
         plan.sheet_height as u64,
+        image_options,
     )
     .await?;
     let sheet_base64 = if body

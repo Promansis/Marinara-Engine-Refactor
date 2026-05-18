@@ -51,6 +51,9 @@ pub(crate) async fn generate_events(state: &AppState, body: Value) -> AppResult<
         prompt_messages.push(marinara_llm::LlmMessage {
             role: "user".to_string(),
             content: guide.to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
         });
     }
     if prompt_messages.is_empty() {
@@ -63,6 +66,7 @@ pub(crate) async fn generate_events(state: &AppState, body: Value) -> AppResult<
         connection: llm_connection_from_value(&connection)?,
         messages: prompt_messages,
         parameters: generation_parameters(&connection, &body),
+        tools: Vec::new(),
     };
     let mut events = vec![json!({ "type": "phase", "data": "Calling model..." })];
     let content = marinara_llm::complete(request).await?;
@@ -98,8 +102,12 @@ pub(crate) async fn test_connection(state: &AppState, id: &str) -> AppResult<Val
         messages: vec![marinara_llm::LlmMessage {
             role: "user".to_string(),
             content: "Reply with exactly: ok".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
         }],
         parameters: json!({ "maxTokens": 16, "temperature": 0 }),
+        tools: Vec::new(),
     };
     let response = marinara_llm::complete(request).await?;
     Ok(json!({
@@ -118,8 +126,12 @@ pub(crate) async fn test_message(state: &AppState, id: &str) -> AppResult<Value>
         messages: vec![marinara_llm::LlmMessage {
             role: "user".to_string(),
             content: "hi".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
         }],
         parameters: json!({ "maxTokens": 64, "temperature": 0.7 }),
+        tools: Vec::new(),
     };
     let response = marinara_llm::complete(request).await?;
     Ok(json!({
@@ -195,6 +207,15 @@ fn llm_message_from_value(message: &Value) -> Option<marinara_llm::LlmMessage> {
     Some(marinara_llm::LlmMessage {
         role: role.to_string(),
         content: content.to_string(),
+        name: message
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        tool_call_id: message
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        tool_calls: message.get("tool_calls").cloned(),
     })
 }
 

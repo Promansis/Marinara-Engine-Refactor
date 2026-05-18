@@ -60,6 +60,15 @@ pub(crate) fn llm_request_from_body(
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string(),
+                name: message
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                tool_call_id: message
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                tool_calls: message.get("tool_calls").cloned(),
             })
         })
         .collect::<AppResult<Vec<_>>>()?;
@@ -67,6 +76,11 @@ pub(crate) fn llm_request_from_body(
         connection: llm_connection_from_value(&connection)?,
         messages,
         parameters: body.get("parameters").cloned().unwrap_or_else(|| json!({})),
+        tools: body
+            .get("tools")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
     })
 }
 
@@ -76,12 +90,16 @@ pub(crate) async fn llm_complete(state: &AppState, body: Value) -> AppResult<Val
 }
 
 pub(crate) async fn llm_stream_events(state: &AppState, body: Value) -> AppResult<Vec<Value>> {
-    let content = marinara_llm::complete(llm_request_from_body(state, body)?).await?;
-    Ok(vec![
-        json!({ "type": "start" }),
-        json!({ "type": "token", "text": content, "data": content }),
-        json!({ "type": "done" }),
-    ])
+    let result = marinara_llm::complete_rich(llm_request_from_body(state, body)?).await?;
+    let mut events = vec![json!({ "type": "start" })];
+    if !result.content.is_empty() {
+        events.push(json!({ "type": "token", "text": result.content, "data": result.content }));
+    }
+    for tool_call in result.tool_calls {
+        events.push(json!({ "type": "tool_call", "data": tool_call }));
+    }
+    events.push(json!({ "type": "done" }));
+    Ok(events)
 }
 
 pub(crate) async fn llm_models(state: &AppState, connection_id: Option<&str>) -> AppResult<Value> {

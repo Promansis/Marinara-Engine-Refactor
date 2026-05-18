@@ -16,6 +16,7 @@ mod bot_browser;
 mod chat_presets;
 mod characters;
 mod chats;
+mod custom_tools;
 mod exports;
 mod fonts;
 mod game_assets;

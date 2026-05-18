@@ -1,10 +1,10 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { startGeneration } from "../../../engine/generation";
+import { retryGenerationAgents, startGeneration } from "../../../engine/generation";
 import { llmApi } from "../../../shared/api/llm-api";
 import { storageApi } from "../../../shared/api/storage-api";
-import { api, ApiError } from "../../../shared/lib/api-client";
+import { ApiError } from "../../../shared/lib/api-client";
 import { useAgentStore } from "../../../shared/stores/agent.store";
 import { useChatStore } from "../../../shared/stores/chat.store";
 
@@ -105,9 +105,16 @@ export function useGenerate() {
     async (chatId: string, agentTypes?: string[], options?: Record<string, unknown>) => {
       useAgentStore.getState().setProcessing(true);
       try {
-        await api.post("/agents/retry", { chatId, agentTypes, options });
+        const results = await retryGenerationAgents(
+          { storage: storageApi, llm: llmApi },
+          { chatId, agentTypes, options },
+        );
+        for (const result of results) {
+          useAgentStore.getState().addResult(result.agentId ?? result.agentType ?? "agent", result);
+        }
         useAgentStore.getState().clearFailedAgentTypes();
         await queryClient.invalidateQueries({ queryKey: ["agents"] });
+        await queryClient.invalidateQueries({ queryKey: ["chats"] });
       } catch (error) {
         toast.error(errorMessage(error));
         throw error;
