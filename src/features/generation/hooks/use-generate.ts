@@ -473,6 +473,25 @@ export async function runGenerationWithUi(
           await queryClient.invalidateQueries({ queryKey: ["chats"] });
           break;
         }
+        case "selfie": {
+          toast("Selfie generated.");
+          await queryClient.invalidateQueries({ queryKey: ["chats"] });
+          await queryClient.invalidateQueries({ queryKey: ["gallery", "images", chatId] });
+          break;
+        }
+        case "selfie_error": {
+          const data = parseMaybeRecord(event.data);
+          toast.error(readString(data.error, "Selfie generation failed."));
+          break;
+        }
+        case "scene_created": {
+          const data = parseMaybeRecord(event.data);
+          const sceneChatId = readString(data.chatId).trim();
+          if (sceneChatId) useChatStore.getState().setActiveChatId(sceneChatId);
+          toast("Scene created.");
+          await queryClient.invalidateQueries({ queryKey: ["chats"] });
+          break;
+        }
         case "done":
           break;
       }

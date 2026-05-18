@@ -7,8 +7,10 @@ use super::*;
 
 use image::{DynamicImage, GenericImageView, ImageFormat, Rgba, RgbaImage};
 use std::collections::VecDeque;
+use std::env;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const SPRITE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"];
 const CLEANUP_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
@@ -27,38 +29,43 @@ struct SpritePlan {
     sheet_height: u32,
 }
 
-pub(crate) fn sprite_capabilities() -> AppResult<Value> {
+struct SpriteCleanupOutput {
+    bytes: Vec<u8>,
+    engine: String,
+}
+
+#[derive(Clone)]
+struct BackgroundRemoverCommand {
+    command: PathBuf,
+    args_prefix: Vec<String>,
+    label: String,
+    source: &'static str,
+}
+
+pub(crate) fn sprite_capabilities(state: &AppState) -> AppResult<Value> {
+    let cleanup_engine = cleanup_engine_status(state);
+    let background_remover = background_remover_status(state);
     Ok(json!({
         "imageProcessingAvailable": true,
         "spriteGenerationAvailable": true,
         "backgroundRemovalAvailable": true,
         "reason": Value::Null,
-        "cleanupEngine": {
-            "engine": "builtin",
-            "installed": true,
-            "command": Value::Null,
-            "source": "local",
-            "runtimeDir": "",
-            "reason": Value::Null
-        }
+        "cleanupEngine": cleanup_engine,
+        "backgroundRemover": background_remover
     }))
 }
 
-pub(crate) fn sprite_cleanup_status() -> AppResult<Value> {
+pub(crate) fn sprite_cleanup_status(state: &AppState) -> AppResult<Value> {
+    let cleanup_engine = cleanup_engine_status(state);
+    let background_remover = background_remover_status(state);
     Ok(json!({
         "available": true,
-        "engine": "builtin",
-        "installed": true,
-        "source": "local",
-        "reason": Value::Null,
-        "cleanupEngine": {
-            "engine": "builtin",
-            "installed": true,
-            "command": Value::Null,
-            "source": "local",
-            "runtimeDir": "",
-            "reason": Value::Null
-        }
+        "engine": cleanup_engine.get("engine").cloned().unwrap_or_else(|| json!("auto")),
+        "installed": cleanup_engine.get("installed").and_then(Value::as_bool).unwrap_or(true),
+        "source": cleanup_engine.get("source").cloned().unwrap_or(Value::Null),
+        "reason": cleanup_engine.get("reason").cloned().unwrap_or(Value::Null),
+        "cleanupEngine": cleanup_engine,
+        "backgroundRemover": background_remover
     }))
 }
 
@@ -149,7 +156,15 @@ pub(crate) async fn generate_sprite_sheet(state: &AppState, body: Value) -> AppR
                         .and_then(Value::as_bool)
                         .unwrap_or(false)
                     {
-                        cleanup_image_base64(&base64, cleanup_strength(&body))?
+                        general_purpose::STANDARD.encode(
+                            cleanup_image_base64(
+                                state,
+                                &base64,
+                                cleanup_strength(&body),
+                                &cleanup_engine(&body),
+                            )?
+                            .bytes,
+                        )
                     } else {
                         base64
                     };
@@ -192,7 +207,15 @@ pub(crate) async fn generate_sprite_sheet(state: &AppState, body: Value) -> AppR
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        cleanup_image_base64(&sheet_base64, cleanup_strength(&body))?
+        general_purpose::STANDARD.encode(
+            cleanup_image_base64(
+                state,
+                &sheet_base64,
+                cleanup_strength(&body),
+                &cleanup_engine(&body),
+            )?
+            .bytes,
+        )
     } else {
         sheet_base64
     };
@@ -200,29 +223,39 @@ pub(crate) async fn generate_sprite_sheet(state: &AppState, body: Value) -> AppR
     Ok(json!({ "sheetBase64": sheet_base64, "cells": cells }))
 }
 
-pub(crate) fn cleanup_generated_sprites(body: Value) -> AppResult<Value> {
+pub(crate) fn cleanup_generated_sprites(state: &AppState, body: Value) -> AppResult<Value> {
     let cells = body
         .get("cells")
         .and_then(Value::as_array)
         .filter(|items| !items.is_empty())
         .ok_or_else(|| AppError::invalid_input("At least one cell is required"))?;
     let strength = cleanup_strength(&body);
+    let requested_engine = cleanup_engine(&body);
     let mut processed = Vec::new();
+    let mut background_remover_processed = 0usize;
+    let mut builtin_processed = 0usize;
     for cell in cells {
         let expression = cell.get("expression").and_then(Value::as_str).unwrap_or("");
         let base64 = cell.get("base64").and_then(Value::as_str).ok_or_else(|| {
             AppError::invalid_input(format!("Invalid base64 image for expression: {expression}"))
         })?;
+        let cleaned = cleanup_image_base64(state, base64, strength, &requested_engine)?;
+        if cleaned.engine == "backgroundremover" {
+            background_remover_processed += 1;
+        } else {
+            builtin_processed += 1;
+        }
         processed.push(json!({
             "expression": expression,
-            "base64": cleanup_image_base64(base64, strength)?
+            "base64": general_purpose::STANDARD.encode(cleaned.bytes)
         }));
     }
     Ok(json!({
         "cells": processed,
-        "engine": cleanup_engine(&body),
-        "externalCleanupProcessed": 0,
-        "builtinProcessed": cells.len()
+        "engine": requested_engine,
+        "externalCleanupProcessed": background_remover_processed,
+        "backgroundRemoverProcessed": background_remover_processed,
+        "builtinProcessed": builtin_processed
     }))
 }
 
@@ -302,6 +335,9 @@ pub(crate) fn clean_saved_sprites(
     let mut entries = Vec::new();
     let mut failed = Vec::new();
     let mut processed = 0usize;
+    let mut background_remover_processed = 0usize;
+    let mut builtin_processed = 0usize;
+    let requested_engine = cleanup_engine(&body);
     for path in targets {
         let expression = expression_from_path(&path);
         let filename = file_name(&path)?;
@@ -309,12 +345,12 @@ pub(crate) fn clean_saved_sprites(
             failed.push(json!({ "expression": expression, "error": "Only PNG, JPEG, and WEBP sprites can be background-cleaned" }));
             continue;
         }
-        match cleanup_file_to_png(&path, cleanup_strength(&body)) {
+        match cleanup_file_to_png(state, &path, cleanup_strength(&body), &requested_engine) {
             Ok(cleaned) => {
                 fs::copy(&path, restore_point_dir.join(&filename))?;
                 let output_filename = format!("{expression}.png");
                 let output_path = dir.join(&output_filename);
-                fs::write(&output_path, cleaned)?;
+                fs::write(&output_path, cleaned.bytes)?;
                 if path != output_path {
                     let _ = fs::remove_file(&path);
                 }
@@ -324,6 +360,11 @@ pub(crate) fn clean_saved_sprites(
                     "cleanedFilename": output_filename,
                     "restorePointFilename": filename
                 }));
+                if cleaned.engine == "backgroundremover" {
+                    background_remover_processed += 1;
+                } else {
+                    builtin_processed += 1;
+                }
                 processed += 1;
             }
             Err(error) => failed.push(json!({ "expression": expression, "error": error.message })),
@@ -345,9 +386,10 @@ pub(crate) fn clean_saved_sprites(
         "processed": processed,
         "failed": failed,
         "restorePointId": if processed > 0 { json!(restore_point_id) } else { Value::Null },
-        "engine": cleanup_engine(&body),
-        "externalCleanupProcessed": 0,
-        "builtinProcessed": processed,
+        "engine": requested_engine,
+        "externalCleanupProcessed": background_remover_processed,
+        "backgroundRemoverProcessed": background_remover_processed,
+        "builtinProcessed": builtin_processed,
         "sprites": list_sprites(state, character_id)?
     }))
 }
@@ -839,18 +881,49 @@ fn slice_sprite_sheet(sheet_base64: &str, plan: &SpritePlan) -> AppResult<Vec<Va
     Ok(cells)
 }
 
-fn cleanup_file_to_png(path: &Path, strength: u8) -> AppResult<Vec<u8>> {
+fn cleanup_file_to_png(
+    state: &AppState,
+    path: &Path,
+    strength: u8,
+    requested_engine: &str,
+) -> AppResult<SpriteCleanupOutput> {
     let bytes = fs::read(path)?;
-    let image = image::load_from_memory(&bytes).map_err(image_error)?;
-    encode_png(cleanup_image(image, strength))
+    cleanup_image_bytes(state, &bytes, strength, requested_engine)
 }
 
-fn cleanup_image_base64(value: &str, strength: u8) -> AppResult<String> {
+fn cleanup_image_base64(
+    state: &AppState,
+    value: &str,
+    strength: u8,
+    requested_engine: &str,
+) -> AppResult<SpriteCleanupOutput> {
     let bytes = general_purpose::STANDARD
         .decode(extract_base64_image_data(value))
         .map_err(|error| AppError::invalid_input(format!("Invalid base64 image: {error}")))?;
+    cleanup_image_bytes(state, &bytes, strength, requested_engine)
+}
+
+fn cleanup_image_bytes(
+    state: &AppState,
+    bytes: &[u8],
+    strength: u8,
+    requested_engine: &str,
+) -> AppResult<SpriteCleanupOutput> {
+    if requested_engine != "builtin" {
+        if let Some(bytes) =
+            try_remove_background_with_backgroundremover(state, bytes, requested_engine == "backgroundremover")?
+        {
+            return Ok(SpriteCleanupOutput {
+                bytes,
+                engine: "backgroundremover".to_string(),
+            });
+        }
+    }
     let image = image::load_from_memory(&bytes).map_err(image_error)?;
-    Ok(general_purpose::STANDARD.encode(encode_png(cleanup_image(image, strength))?))
+    Ok(SpriteCleanupOutput {
+        bytes: encode_png(cleanup_image(image, strength))?,
+        engine: "builtin".to_string(),
+    })
 }
 
 fn cleanup_image(image: DynamicImage, strength: u8) -> DynamicImage {
@@ -1455,9 +1528,296 @@ fn cleanup_engine(body: &Value) -> String {
         .to_ascii_lowercase()
         .as_str()
     {
+        "backgroundremover" | "background-remover" | "ai" => "backgroundremover".to_string(),
         "builtin" | "built-in" | "matte" | "white" => "builtin".to_string(),
         _ => "auto".to_string(),
     }
+}
+
+fn env_bool(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+fn preferred_background_removal_engine() -> String {
+    let raw = env::var("SPRITE_BACKGROUND_REMOVAL_ENGINE")
+        .or_else(|_| env::var("BACKGROUND_REMOVAL_ENGINE"))
+        .unwrap_or_else(|_| "auto".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    match raw.as_str() {
+        "backgroundremover" | "background-remover" | "ai" => "backgroundremover".to_string(),
+        "builtin" | "built-in" | "sharp" | "matte" | "white" => "builtin".to_string(),
+        _ => "auto".to_string(),
+    }
+}
+
+fn background_remover_runtime_dir(state: &AppState) -> PathBuf {
+    state.data_dir.join("background-remover")
+}
+
+fn executable_exists(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn local_venv_executable(state: &AppState, name: &str) -> PathBuf {
+    let venv = background_remover_runtime_dir(state).join(".venv");
+    if cfg!(windows) {
+        venv.join("Scripts").join(if name == "python" {
+            "python.exe"
+        } else {
+            "backgroundremover.exe"
+        })
+    } else {
+        venv.join("bin").join(name)
+    }
+}
+
+fn path_executable_names(name: &str) -> Vec<String> {
+    if !cfg!(windows) {
+        return vec![name.to_string()];
+    }
+    env::var("PATHEXT")
+        .unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string())
+        .split(';')
+        .filter_map(|ext| {
+            let ext = ext.trim();
+            (!ext.is_empty()).then(|| format!("{name}{}", ext.to_ascii_lowercase()))
+        })
+        .collect()
+}
+
+fn find_executable_on_path(name: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    for entry in env::split_paths(&path) {
+        for executable in path_executable_names(name) {
+            let candidate = entry.join(executable);
+            if executable_exists(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_backgroundremover_command(state: &AppState) -> Option<BackgroundRemoverCommand> {
+    if let Ok(command) = env::var("BACKGROUNDREMOVER_COMMAND") {
+        let command = command.trim();
+        if !command.is_empty() {
+            return Some(BackgroundRemoverCommand {
+                command: PathBuf::from(command),
+                args_prefix: Vec::new(),
+                label: command.to_string(),
+                source: "env",
+            });
+        }
+    }
+    if let Ok(python) = env::var("BACKGROUNDREMOVER_PYTHON") {
+        let python = python.trim();
+        if !python.is_empty() {
+            return Some(BackgroundRemoverCommand {
+                command: PathBuf::from(python),
+                args_prefix: vec!["-m".to_string(), "backgroundremover.cmd.cli".to_string()],
+                label: format!("{python} -m backgroundremover.cmd.cli"),
+                source: "env",
+            });
+        }
+    }
+    let local_cli = local_venv_executable(state, "backgroundremover");
+    if executable_exists(&local_cli) {
+        return Some(BackgroundRemoverCommand {
+            label: local_cli.to_string_lossy().to_string(),
+            command: local_cli,
+            args_prefix: Vec::new(),
+            source: "local",
+        });
+    }
+    let local_python = local_venv_executable(state, "python");
+    if executable_exists(&local_python) {
+        return Some(BackgroundRemoverCommand {
+            label: format!("{} -m backgroundremover.cmd.cli", local_python.to_string_lossy()),
+            command: local_python,
+            args_prefix: vec!["-m".to_string(), "backgroundremover.cmd.cli".to_string()],
+            source: "local",
+        });
+    }
+    find_executable_on_path("backgroundremover").map(|command| BackgroundRemoverCommand {
+        label: command.to_string_lossy().to_string(),
+        command,
+        args_prefix: Vec::new(),
+        source: "path",
+    })
+}
+
+fn background_remover_status(state: &AppState) -> Value {
+    let engine = preferred_background_removal_engine();
+    let disabled = env_bool("BACKGROUNDREMOVER_DISABLED");
+    let command = if disabled || engine == "builtin" {
+        None
+    } else {
+        resolve_backgroundremover_command(state)
+    };
+    json!({
+        "engine": engine,
+        "installed": command.is_some(),
+        "command": command.as_ref().map(|command| command.label.clone()),
+        "source": command.as_ref().map(|command| command.source),
+        "runtimeDir": background_remover_runtime_dir(state).to_string_lossy(),
+        "reason": if disabled {
+            Value::String("backgroundremover is disabled by BACKGROUNDREMOVER_DISABLED".to_string())
+        } else if engine == "builtin" {
+            Value::String("Built-in matte cleanup is forced by SPRITE_BACKGROUND_REMOVAL_ENGINE".to_string())
+        } else if command.is_some() {
+            Value::Null
+        } else {
+            Value::String("Install backgroundremover or set BACKGROUNDREMOVER_COMMAND/BACKGROUNDREMOVER_PYTHON to enable optional AI background cleanup.".to_string())
+        }
+    })
+}
+
+fn cleanup_engine_status(state: &AppState) -> Value {
+    let engine = preferred_background_removal_engine();
+    let background_remover = background_remover_status(state);
+    let background_remover_installed = background_remover
+        .get("installed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let forced_background_remover = engine == "backgroundremover";
+    let installed = !forced_background_remover || background_remover_installed;
+    json!({
+        "engine": engine,
+        "installed": installed,
+        "command": background_remover.get("command").cloned().unwrap_or(Value::Null),
+        "source": if background_remover_installed {
+            background_remover.get("source").cloned().unwrap_or(Value::Null)
+        } else {
+            json!("local")
+        },
+        "runtimeDir": background_remover_runtime_dir(state).to_string_lossy(),
+        "reason": if installed {
+            if background_remover_installed {
+                Value::Null
+            } else {
+                Value::String("Using built-in matte cleanup; optional backgroundremover is not installed.".to_string())
+            }
+        } else {
+            background_remover.get("reason").cloned().unwrap_or_else(|| {
+                Value::String("backgroundremover is required but unavailable.".to_string())
+            })
+        }
+    })
+}
+
+fn try_remove_background_with_backgroundremover(
+    state: &AppState,
+    input: &[u8],
+    required: bool,
+) -> AppResult<Option<Vec<u8>>> {
+    let engine = preferred_background_removal_engine();
+    let disabled = env_bool("BACKGROUNDREMOVER_DISABLED");
+    if engine == "builtin" || disabled {
+        if required {
+            return Err(AppError::new(
+                "backgroundremover_unavailable",
+                if disabled {
+                    "backgroundremover is disabled by BACKGROUNDREMOVER_DISABLED."
+                } else {
+                    "backgroundremover cannot run while SPRITE_BACKGROUND_REMOVAL_ENGINE is set to builtin."
+                },
+            ));
+        }
+        return Ok(None);
+    }
+    let Some(command) = resolve_backgroundremover_command(state) else {
+        if required || engine == "backgroundremover" {
+            return Err(AppError::new(
+                "backgroundremover_unavailable",
+                "backgroundremover is not installed. Install it or set BACKGROUNDREMOVER_COMMAND/BACKGROUNDREMOVER_PYTHON.",
+            ));
+        }
+        return Ok(None);
+    };
+    let runtime_dir = background_remover_runtime_dir(state);
+    let model_dir = runtime_dir.join("models");
+    fs::create_dir_all(&model_dir)?;
+    let work_dir = env::temp_dir().join(format!("marinara-bgrem-{}-{}", now_millis(), new_id()));
+    fs::create_dir_all(&work_dir)?;
+    let input_path = work_dir.join("input.png");
+    let output_path = work_dir.join("output.png");
+    let png_input = encode_png(image::load_from_memory(input).map_err(image_error)?)?;
+    fs::write(&input_path, png_input)?;
+
+    let mut args = command.args_prefix.clone();
+    args.push("-i".to_string());
+    args.push(input_path.to_string_lossy().to_string());
+    args.push("-o".to_string());
+    args.push(output_path.to_string_lossy().to_string());
+
+    let mut process = Command::new(&command.command);
+    process.args(args).env(
+        "KMP_DUPLICATE_LIB_OK",
+        env::var("KMP_DUPLICATE_LIB_OK").unwrap_or_else(|_| "TRUE".to_string()),
+    );
+    process.env(
+        "U2NET_HOME",
+        env::var("U2NET_HOME").unwrap_or_else(|_| model_dir.to_string_lossy().to_string()),
+    );
+    process.env(
+        "U2NET_PATH",
+        env::var("U2NET_PATH")
+            .unwrap_or_else(|_| model_dir.join("u2net.pth").to_string_lossy().to_string()),
+    );
+    process.env(
+        "U2NETP_PATH",
+        env::var("U2NETP_PATH")
+            .unwrap_or_else(|_| model_dir.join("u2netp.pth").to_string_lossy().to_string()),
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        process.creation_flags(0x08000000);
+    }
+    let output = process.output();
+    let result = match output {
+        Ok(output) if output.status.success() && output_path.exists() => {
+            fs::read(&output_path).map(Some).map_err(AppError::from)
+        }
+        Ok(output) => {
+            let detail = [
+                String::from_utf8_lossy(&output.stdout).to_string(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ]
+            .into_iter()
+            .filter(|value| !value.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+            if required || engine == "backgroundremover" {
+                Err(AppError::new(
+                    "backgroundremover_failed",
+                    if detail.trim().is_empty() {
+                        "backgroundremover did not write an output image".to_string()
+                    } else {
+                        detail
+                    },
+                ))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(error) => {
+            if required || engine == "backgroundremover" {
+                Err(AppError::new("backgroundremover_failed", error.to_string()))
+            } else {
+                Ok(None)
+            }
+        }
+    };
+    let _ = fs::remove_file(&input_path);
+    let _ = fs::remove_file(&output_path);
+    let _ = fs::remove_dir_all(&work_dir);
+    result
 }
 
 fn validate_safe_segment(value: &str, label: &str) -> AppResult<()> {

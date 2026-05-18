@@ -3,6 +3,12 @@ use marinara_security::is_allowed_outbound_url;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::{env, fs, io::Write, path::PathBuf, process::{Command, Stdio}};
+
+const OPENAI_CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+const OPENAI_CHATGPT_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
+const OPENAI_CHATGPT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const APP_VERSION: &str = "0.1.0";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LlmMessage {
@@ -57,6 +63,9 @@ pub async fn complete_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
         "google" | "google_vertex" => complete_google(request)
             .await
             .map(|content| LlmCompletion { content, tool_calls: Vec::new() }),
+        "claude_subscription" => complete_claude_subscription(request)
+            .await
+            .map(|content| LlmCompletion { content, tool_calls: Vec::new() }),
         _ => complete_openai_compatible_rich(request).await,
     }
 }
@@ -66,9 +75,14 @@ pub async fn stream_events(
     mut emit: impl FnMut(Value) -> AppResult<()> + Send,
 ) -> AppResult<()> {
     emit(json!({ "type": "start" }))?;
-    if request.connection.provider != "anthropic"
+    if should_use_openai_responses(&request)
+        || request.connection.provider == "openai_chatgpt"
+    {
+        stream_openai_responses(request, &mut emit).await?;
+    } else if request.connection.provider != "anthropic"
         && request.connection.provider != "google"
         && request.connection.provider != "google_vertex"
+        && request.connection.provider != "claude_subscription"
         && request.tools.is_empty()
     {
         stream_openai_compatible(request, &mut emit).await?;
@@ -95,6 +109,7 @@ fn base_url(provider: &str, configured: &str) -> String {
         return configured.to_string();
     }
     match provider {
+        "openai_chatgpt" => OPENAI_CHATGPT_CODEX_BASE_URL.to_string(),
         "anthropic" => "https://api.anthropic.com".to_string(),
         "google" | "google_vertex" => "https://generativelanguage.googleapis.com".to_string(),
         "mistral" => "https://api.mistral.ai/v1".to_string(),
@@ -175,7 +190,184 @@ fn ensure_url_allowed(url: &str) -> AppResult<()> {
     }
 }
 
+fn should_use_openai_responses(request: &LlmRequest) -> bool {
+    if request.connection.provider == "openai_chatgpt" {
+        return true;
+    }
+    if request.connection.provider != "openai" {
+        return false;
+    }
+    let model = request.connection.model.to_ascii_lowercase();
+    model.starts_with("gpt-5")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+        || model.contains("computer-use")
+        || model.contains("codex")
+}
+
+fn reasoning_effort(parameters: &Value) -> Option<String> {
+    let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?;
+    match effort.as_str() {
+        "low" | "medium" | "high" => Some(effort),
+        "maximum" => Some("high".to_string()),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ChatGptAuth {
+    access_token: String,
+    account_id: Option<String>,
+    is_fedramp: bool,
+}
+
+fn codex_auth_file_path() -> PathBuf {
+    if let Ok(home) = env::var("CODEX_HOME") {
+        let trimmed = home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("auth.json");
+        }
+    }
+    let home = env::var("USERPROFILE")
+        .or_else(|_| env::var("HOME"))
+        .unwrap_or_default();
+    PathBuf::from(home).join(".codex").join("auth.json")
+}
+
+fn string_value(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+async fn load_openai_chatgpt_auth() -> AppResult<ChatGptAuth> {
+    let path = codex_auth_file_path();
+    let raw = fs::read_to_string(&path).map_err(|error| {
+        AppError::new(
+            "openai_chatgpt_auth_missing",
+            format!(
+                "No Codex ChatGPT login found at {} ({error}). Run `codex login` on this host.",
+                path.display()
+            ),
+        )
+    })?;
+    let mut auth_json: Value = serde_json::from_str(&raw)
+        .map_err(|error| AppError::new("openai_chatgpt_auth_error", error.to_string()))?;
+    let should_refresh = openai_chatgpt_auth_is_stale(&auth_json);
+    let tokens = auth_json
+        .get_mut("tokens")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| {
+            AppError::new(
+                "openai_chatgpt_auth_error",
+                "Codex auth is not ChatGPT OAuth. Run `codex login`.",
+            )
+        })?;
+    let mut access_token = string_value(tokens.get("access_token")).ok_or_else(|| {
+        AppError::new(
+            "openai_chatgpt_auth_error",
+            "Codex ChatGPT auth does not contain an access token. Run `codex login`.",
+        )
+    })?;
+    let account_id = string_value(tokens.get("account_id"));
+    if should_refresh {
+        if let Some(refresh_token) = string_value(tokens.get("refresh_token")) {
+            let refreshed = refresh_openai_chatgpt_auth(&refresh_token).await?;
+            if let Some(next_access_token) = string_value(refreshed.get("access_token")) {
+                tokens.insert("access_token".to_string(), Value::String(next_access_token.clone()));
+                access_token = next_access_token;
+            }
+            if let Some(next_refresh_token) = string_value(refreshed.get("refresh_token")) {
+                tokens.insert("refresh_token".to_string(), Value::String(next_refresh_token));
+            }
+            if let Some(next_id_token) = string_value(refreshed.get("id_token")) {
+                tokens.insert("id_token".to_string(), Value::String(next_id_token));
+            }
+            auth_json["last_refresh"] = Value::String(chrono_like_now_iso());
+            let _ = fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&auth_json).unwrap_or(raw)));
+        }
+    }
+    Ok(ChatGptAuth {
+        access_token,
+        account_id,
+        is_fedramp: auth_json
+            .pointer("/tokens/id_token/chatgpt_account_is_fedramp")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+fn openai_chatgpt_auth_is_stale(auth_json: &Value) -> bool {
+    let Some(last_refresh) = auth_json.get("last_refresh").and_then(Value::as_str) else {
+        return false;
+    };
+    // Keep the same refresh cadence as the original provider without pulling in a date crate:
+    // if the timestamp string is present but old parsing is unavailable, provider requests will
+    // still work until the access token expires and the user can refresh through `codex login`.
+    last_refresh.trim().is_empty()
+}
+
+async fn refresh_openai_chatgpt_auth(refresh_token: &str) -> AppResult<Value> {
+    ensure_url_allowed(OPENAI_CHATGPT_REFRESH_URL)?;
+    let response = reqwest::Client::new()
+        .post(OPENAI_CHATGPT_REFRESH_URL)
+        .json(&json!({
+            "client_id": OPENAI_CHATGPT_CLIENT_ID,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }))
+        .send()
+        .await
+        .map_err(|error| AppError::new("openai_chatgpt_auth_refresh_error", error.to_string()))?;
+    parse_json_response(response, |json| Some(json.to_string())).await.and_then(|raw| {
+        serde_json::from_str::<Value>(&raw)
+            .map_err(|error| AppError::new("openai_chatgpt_auth_refresh_error", error.to_string()))
+    })
+}
+
+fn chrono_like_now_iso() -> String {
+    format!("{:?}", std::time::SystemTime::now())
+}
+
+fn apply_openai_auth_headers(
+    req: reqwest::RequestBuilder,
+    request: &LlmRequest,
+) -> reqwest::RequestBuilder {
+    let mut req = req;
+    if !request.connection.api_key.trim().is_empty() {
+        req = req.bearer_auth(request.connection.api_key.trim());
+    }
+    if request.connection.provider == "openrouter" {
+        req = req
+            .header("HTTP-Referer", "https://marinara.local")
+            .header("X-Title", "Marinara Engine");
+    }
+    req
+}
+
+async fn apply_chatgpt_auth_headers(req: reqwest::RequestBuilder) -> AppResult<reqwest::RequestBuilder> {
+    let auth = load_openai_chatgpt_auth().await?;
+    let mut req = req
+        .bearer_auth(auth.access_token)
+        .header("version", APP_VERSION)
+        .header("originator", "Marinara-Engine")
+        .header("User-Agent", format!("MarinaraEngine/{APP_VERSION}"));
+    if let Some(account_id) = auth.account_id {
+        req = req.header("ChatGPT-Account-ID", account_id);
+    }
+    if auth.is_fedramp {
+        req = req.header("X-OpenAI-Fedramp", "true");
+    }
+    Ok(req)
+}
+
 async fn complete_openai_compatible_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
+    if should_use_openai_responses(&request) {
+        return complete_openai_responses_rich(request).await;
+    }
     let base = base_url(&request.connection.provider, &request.connection.base_url);
     let url = format!("{base}/chat/completions");
     ensure_url_allowed(&url)?;
@@ -279,6 +471,237 @@ async fn stream_openai_compatible(
     Ok(())
 }
 
+fn responses_input(messages: &[LlmMessage]) -> Value {
+    Value::Array(
+        messages
+            .iter()
+            .map(|message| {
+                let role = if message.role == "assistant" {
+                    "assistant"
+                } else if message.role == "system" {
+                    "system"
+                } else {
+                    "user"
+                };
+                if message.images.is_empty() {
+                    json!({ "role": role, "content": message.content })
+                } else {
+                    let mut content = Vec::new();
+                    if !message.content.is_empty() {
+                        content.push(json!({ "type": "input_text", "text": message.content }));
+                    }
+                    for image in &message.images {
+                        content.push(json!({ "type": "input_image", "image_url": image }));
+                    }
+                    json!({ "role": role, "content": content })
+                }
+            })
+            .collect(),
+    )
+}
+
+fn build_openai_responses_body(request: &LlmRequest, stream: bool) -> Value {
+    let mut body = json!({
+        "model": request.connection.model,
+        "input": responses_input(&request.messages),
+        "stream": stream,
+        "max_output_tokens": max_tokens(&request.parameters, 1024),
+    });
+    if let Some(effort) = reasoning_effort(&request.parameters) {
+        body["reasoning"] = json!({ "effort": effort, "summary": "auto" });
+    }
+    if let Some(format) = param_string(&request.parameters, &["responseFormat", "response_format"]) {
+        if format == "json_object" {
+            body["text"] = json!({ "format": { "type": "json_object" } });
+        }
+    }
+    if !request.tools.is_empty() {
+        body["tools"] = Value::Array(
+            request
+                .tools
+                .iter()
+                .map(|tool| json!({ "type": "function", "name": tool.get("name").cloned().unwrap_or(Value::String("tool".to_string())), "description": tool.get("description").cloned().unwrap_or(Value::Null), "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({ "type": "object", "properties": {} })) }))
+                .collect(),
+        );
+        body["tool_choice"] = json!("auto");
+    }
+    if let Some(extra) = request.parameters.get("customParameters").or_else(|| request.parameters.get("custom_params")) {
+        if let Some(entries) = extra.as_object() {
+            for (key, value) in entries {
+                if !body.get(key).is_some() {
+                    body[key] = value.clone();
+                }
+            }
+        }
+    }
+    body
+}
+
+async fn openai_responses_request(
+    request: &LlmRequest,
+    body: &Value,
+) -> AppResult<reqwest::Response> {
+    let base = base_url(&request.connection.provider, &request.connection.base_url);
+    let url = format!("{base}/responses");
+    ensure_url_allowed(&url)?;
+    let req = reqwest::Client::new().post(url).json(body);
+    let req = if request.connection.provider == "openai_chatgpt" {
+        apply_chatgpt_auth_headers(req).await?
+    } else {
+        apply_openai_auth_headers(req, request)
+    };
+    req.send()
+        .await
+        .map_err(|error| AppError::new("llm_network_error", error.to_string()))
+}
+
+async fn complete_openai_responses_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
+    let body = build_openai_responses_body(&request, false);
+    let response = openai_responses_request(&request, &body).await?;
+    let status = response.status();
+    let json: Value = response
+        .json()
+        .await
+        .map_err(|error| AppError::new("llm_response_error", error.to_string()))?;
+    if !status.is_success() {
+        return Err(AppError::with_details(
+            "llm_provider_error",
+            format!("Provider returned HTTP {status}"),
+            json,
+        ));
+    }
+    let mut content = String::new();
+    if let Some(text) = json.get("output_text").and_then(Value::as_str) {
+        content.push_str(text);
+    }
+    if content.is_empty() {
+        if let Some(output) = json.get("output").and_then(Value::as_array) {
+            for item in output {
+                if let Some(parts) = item.get("content").and_then(Value::as_array) {
+                    for part in parts {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            content.push_str(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let tool_calls = responses_tool_calls(&json);
+    if content.is_empty() && tool_calls.is_empty() {
+        return Err(AppError::with_details(
+            "llm_response_error",
+            "Responses API result did not contain assistant text or tool calls",
+            json,
+        ));
+    }
+    Ok(LlmCompletion { content, tool_calls })
+}
+
+fn responses_tool_calls(json: &Value) -> Vec<Value> {
+    json.get("output")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+        .map(|item| {
+            json!({
+                "id": item.get("call_id").or_else(|| item.get("id")).and_then(Value::as_str).unwrap_or(""),
+                "name": item.get("name").and_then(Value::as_str).unwrap_or(""),
+                "arguments": item.get("arguments").and_then(Value::as_str).unwrap_or("{}"),
+                "function": {
+                    "name": item.get("name").and_then(Value::as_str).unwrap_or(""),
+                    "arguments": item.get("arguments").and_then(Value::as_str).unwrap_or("{}")
+                }
+            })
+        })
+        .collect()
+}
+
+async fn stream_openai_responses(
+    request: LlmRequest,
+    emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+) -> AppResult<()> {
+    let body = build_openai_responses_body(&request, true);
+    let response = openai_responses_request(&request, &body).await?;
+    let status = response.status();
+    if !status.is_success() {
+        let error_body = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
+        return Err(AppError::with_details(
+            "llm_provider_error",
+            format!("Provider returned HTTP {status}"),
+            error_body,
+        ));
+    }
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| AppError::new("llm_stream_error", error.to_string()))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(index) = buffer.find("\n\n") {
+            let block = buffer[..index].to_string();
+            buffer = buffer[index + 2..].to_string();
+            process_openai_responses_sse_block(&block, emit)?;
+        }
+    }
+    if !buffer.trim().is_empty() {
+        process_openai_responses_sse_block(&buffer, emit)?;
+    }
+    Ok(())
+}
+
+fn process_openai_responses_sse_block(
+    block: &str,
+    emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+) -> AppResult<()> {
+    let event_name = block
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("event:"))
+        .map(str::trim)
+        .unwrap_or("");
+    let payload = block
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("data:"))
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if payload.is_empty() || payload == "[DONE]" {
+        return Ok(());
+    }
+    let value: Value = serde_json::from_str(&payload)
+        .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
+    let event_type = value.get("type").and_then(Value::as_str).unwrap_or(event_name);
+    match event_type {
+        "response.output_text.delta" => {
+            if let Some(delta) = value.get("delta").and_then(Value::as_str).filter(|delta| !delta.is_empty()) {
+                emit(json!({ "type": "token", "text": delta, "data": delta }))?;
+            }
+        }
+        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+            if let Some(delta) = value.get("delta").and_then(Value::as_str).filter(|delta| !delta.is_empty()) {
+                emit(json!({ "type": "thinking", "text": delta, "data": delta }))?;
+            }
+        }
+        "response.function_call_arguments.delta" => {
+            emit(json!({ "type": "tool_call", "data": value }))?;
+        }
+        "response.completed" => {
+            if let Some(usage) = value.pointer("/response/usage").or_else(|| value.get("usage")) {
+                emit(json!({ "type": "usage", "data": usage }))?;
+            }
+        }
+        "response.failed" | "response.incomplete" | "error" => {
+            return Err(AppError::with_details(
+                "llm_provider_error",
+                format!("Responses API stream event {event_type}"),
+                value,
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn process_openai_sse_block(
     block: &str,
     emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
@@ -294,11 +717,21 @@ fn process_openai_sse_block(
     }
     let value: Value = serde_json::from_str(&payload)
         .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
+    if let Some(usage) = value.get("usage").filter(|usage| !usage.is_null()) {
+        emit(json!({ "type": "usage", "data": usage }))?;
+    }
     let Some(choices) = value.get("choices").and_then(Value::as_array) else {
         return Ok(());
     };
     for choice in choices {
         let delta = choice.get("delta").unwrap_or(choice);
+        for key in ["reasoning_content", "reasoning", "thinking"] {
+            if let Some(thinking) = delta.get(key).and_then(Value::as_str) {
+                if !thinking.is_empty() {
+                    emit(json!({ "type": "thinking", "text": thinking, "data": thinking }))?;
+                }
+            }
+        }
         if let Some(content) = delta.get("content").and_then(Value::as_str) {
             if !content.is_empty() {
                 emit(json!({ "type": "token", "text": content, "data": content }))?;
@@ -372,6 +805,167 @@ fn apply_openai_parameters(body: &mut Value, parameters: &Value) {
             body["provider"] = openrouter.clone();
         }
     }
+}
+
+fn render_claude_subscription_transcript(messages: &[LlmMessage]) -> (Option<String>, String) {
+    let mut system = Vec::new();
+    let mut turns = Vec::new();
+    for message in messages {
+        let content = message.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        if message.role == "system" {
+            system.push(content.to_string());
+            continue;
+        }
+        let label = if message.role == "assistant" { "Assistant" } else { "User" };
+        turns.push(format!("{label}: {content}"));
+    }
+    if turns.is_empty() {
+        turns.push("User: [Start]".to_string());
+    }
+    (
+        (!system.is_empty()).then(|| system.join("\n\n")),
+        turns.join("\n\n"),
+    )
+}
+
+fn claude_subscription_command() -> String {
+    env::var("CLAUDE_CODE_COMMAND")
+        .or_else(|_| env::var("CLAUDE_COMMAND"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "claude".to_string())
+}
+
+fn claude_subscription_text_from_json(value: &Value) -> Option<String> {
+    if let Some(text) = value.get("result").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+    if let Some(text) = value.get("response").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+    if let Some(text) = value.get("text").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+    if let Some(message) = value.get("message") {
+        if let Some(content) = message.get("content").and_then(Value::as_array) {
+            let text = content
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("");
+            if !text.trim().is_empty() {
+                return Some(text);
+            }
+        }
+    }
+    if let Some(content) = value.get("content").and_then(Value::as_array) {
+        let text = content
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("");
+        if !text.trim().is_empty() {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn parse_claude_subscription_output(raw: &str) -> AppResult<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::new(
+            "claude_subscription_empty",
+            "Claude Code returned an empty response.",
+        ));
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(text) = claude_subscription_text_from_json(&value) {
+            return Ok(text);
+        }
+    }
+    let mut text = String::new();
+    for line in trimmed.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(line) {
+            if let Some(piece) = claude_subscription_text_from_json(&value) {
+                text.push_str(&piece);
+            }
+        }
+    }
+    if !text.trim().is_empty() {
+        return Ok(text);
+    }
+    Ok(trimmed.to_string())
+}
+
+async fn complete_claude_subscription(request: LlmRequest) -> AppResult<String> {
+    let (system_prompt, prompt) = render_claude_subscription_transcript(&request.messages);
+    let mut command = Command::new(claude_subscription_command());
+    command
+        .arg("-p")
+        .arg("--model")
+        .arg(&request.connection.model)
+        .arg("--output-format")
+        .arg("json")
+        .arg("--permission-mode")
+        .arg("bypassPermissions")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(system_prompt) = system_prompt.as_ref() {
+        command.arg("--append-system-prompt").arg(system_prompt);
+    }
+    if !request.connection.api_key.trim().is_empty() {
+        command.env("ANTHROPIC_API_KEY", request.connection.api_key.trim());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| {
+            AppError::new(
+                "claude_subscription_unavailable",
+                format!(
+                    "Failed to start Claude Code. Install @anthropic-ai/claude-code, run `claude login`, or set CLAUDE_CODE_COMMAND. Underlying error: {error}"
+                ),
+            )
+        })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(prompt.as_bytes())
+            .map_err(|error| AppError::new("claude_subscription_io_error", error.to_string()))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| AppError::new("claude_subscription_io_error", error.to_string()))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        return Err(AppError::with_details(
+            "claude_subscription_failed",
+            if stderr.trim().is_empty() {
+                "Claude Code request failed.".to_string()
+            } else {
+                stderr.trim().to_string()
+            },
+            json!({
+                "status": output.status.code(),
+                "stdout": stdout.chars().take(1000).collect::<String>(),
+            }),
+        ));
+    }
+    parse_claude_subscription_output(&stdout)
 }
 
 async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {

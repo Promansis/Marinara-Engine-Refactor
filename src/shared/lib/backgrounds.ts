@@ -20,9 +20,6 @@ export function chatBackgroundMetadataToUrl(value: unknown): string | null {
   if (background.startsWith(USER_BACKGROUND_URL_PREFIX) || background.startsWith(GAME_ASSET_URL_PREFIX)) {
     return background;
   }
-  if (background.startsWith("/api/")) {
-    return null;
-  }
   if (/^(https?:|data:|blob:)/i.test(background) || background.startsWith("/")) {
     return background;
   }

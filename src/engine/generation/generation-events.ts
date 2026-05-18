@@ -7,4 +7,7 @@ export type GenerationEvent =
   | { type: "cross_post"; data: unknown }
   | { type: "assistant_action"; data: unknown }
   | { type: "ooc_posted"; data: unknown }
+  | { type: "selfie"; data: unknown }
+  | { type: "selfie_error"; data: unknown }
+  | { type: "scene_created"; data: unknown }
   | { type: "done"; data?: unknown };

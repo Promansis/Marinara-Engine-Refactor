@@ -23,9 +23,11 @@ export interface LlmRequest {
 }
 
 export interface LlmChunk {
-  type: "start" | "token" | "tool_call" | "usage" | "done" | "error";
+  type: "start" | "token" | "thinking" | "tool_call" | "usage" | "done" | "error";
   text?: string;
   data?: unknown;
+  finishReason?: string;
+  providerMetadata?: unknown;
 }
 
 export interface LlmGateway {

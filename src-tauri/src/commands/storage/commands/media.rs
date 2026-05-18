@@ -5,13 +5,13 @@ use serde_json::{json, Value};
 use tauri::State;
 
 #[tauri::command]
-pub fn sprite_capabilities_command() -> Result<Value, AppError> {
-    sprites::sprite_capabilities()
+pub fn sprite_capabilities_command(state: State<'_, AppState>) -> Result<Value, AppError> {
+    sprites::sprite_capabilities(&state)
 }
 
 #[tauri::command]
-pub fn sprite_cleanup_status_command() -> Result<Value, AppError> {
-    sprites::sprite_cleanup_status()
+pub fn sprite_cleanup_status_command(state: State<'_, AppState>) -> Result<Value, AppError> {
+    sprites::sprite_cleanup_status(&state)
 }
 
 #[tauri::command]
@@ -31,8 +31,8 @@ pub async fn sprite_generate_sheet(
 }
 
 #[tauri::command]
-pub fn sprite_cleanup(body: Value) -> Result<Value, AppError> {
-    sprites::cleanup_generated_sprites(body)
+pub fn sprite_cleanup(state: State<'_, AppState>, body: Value) -> Result<Value, AppError> {
+    sprites::cleanup_generated_sprites(&state, body)
 }
 
 #[tauri::command]

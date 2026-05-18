@@ -1,5 +1,6 @@
 import type { StorageGateway } from "../capabilities/storage";
 import type { IntegrationGateway } from "../capabilities/integrations";
+import type { LlmGateway } from "../capabilities/llm";
 import {
   parseCharacterCommands,
   type CharacterCommand,
@@ -10,18 +11,23 @@ import {
   type UpdateLorebookCommand,
   type UpdatePersonaCommand,
 } from "../modes/chat/commands/character-commands";
+import { createRoleplayScene, planRoleplayScene } from "../modes/roleplay/scene/scene-service";
 import { newId, nowIso, parseArray, parseRecord, readString, stringArray, type JsonRecord } from "./runtime-records";
 
 export type ConnectedCommandEvent =
   | { type: "cross_post"; data: JsonRecord }
   | { type: "assistant_action"; data: JsonRecord }
-  | { type: "ooc_posted"; data: JsonRecord };
+  | { type: "ooc_posted"; data: JsonRecord }
+  | { type: "selfie"; data: JsonRecord }
+  | { type: "selfie_error"; data: JsonRecord }
+  | { type: "scene_created"; data: JsonRecord };
 
 export interface ConnectedCommandResult {
   displayContent: string;
   createdNotes: JsonRecord[];
   executedCommands: string[];
   events: ConnectedCommandEvent[];
+  assistantAttachments: JsonRecord[];
   suppressAssistantMessage?: boolean;
 }
 
@@ -128,6 +134,249 @@ async function fetchCommandContext(storage: StorageGateway, command: Extract<Cha
   };
 }
 
+function activeCharacterId(chat: JsonRecord): string | null {
+  return stringArray(chat.characterIds)[0] ?? null;
+}
+
+function parseSelfieSize(value: unknown): { width: number; height: number } {
+  const text = readString(value).trim();
+  const match = text.match(/^(\d{2,5})x(\d{2,5})$/i);
+  if (!match) return { width: 512, height: 768 };
+  return {
+    width: Math.max(64, Math.min(4096, Number(match[1]))),
+    height: Math.max(64, Math.min(4096, Number(match[2]))),
+  };
+}
+
+function imageExtension(mimeType: string): string {
+  if (mimeType.includes("jpeg") || mimeType.includes("jpg")) return "jpg";
+  if (mimeType.includes("webp")) return "webp";
+  if (mimeType.includes("gif")) return "gif";
+  return "png";
+}
+
+async function buildSelfiePrompt(args: {
+  storage: StorageGateway;
+  llm?: LlmGateway;
+  llmConnectionId?: string | null;
+  chat: JsonRecord;
+  commandContext?: string;
+  characterId: string | null;
+}): Promise<{ prompt: string; characterName: string }> {
+  const character = args.characterId ? await args.storage.get<JsonRecord>("characters", args.characterId) : null;
+  const data = parseData(character ?? undefined);
+  const characterName = nameOf(character ?? {}) || readString(data.name, "character") || "character";
+  const appearance =
+    readString(parseRecord(data.extensions).appearance).trim() ||
+    readString(data.appearance).trim() ||
+    readString(data.description).trim();
+  const metadata = parseRecord(args.chat.metadata);
+  const positive =
+    readString(metadata.selfiePositivePrompt).trim() ||
+    stringArray(metadata.selfieTags).join(", ");
+  const template = readString(metadata.selfiePrompt).trim();
+  const systemPrompt =
+    template ||
+    [
+      "You are an image prompt generator. Create one concise, detailed image generation prompt for a selfie photo.",
+      "Include character identity, appearance, clothing, expression, pose, selfie angle, lighting, and setting.",
+      "Infer the visual style from the character. Return only the prompt text.",
+      positive ? `Always include these tags or modifiers: ${positive}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  const userPrompt = args.commandContext
+    ? `Context for the selfie: ${args.commandContext}`
+    : `Generate a casual selfie of ${characterName} based on the current conversation context.`;
+
+  let prompt = "";
+  if (args.llm && args.llmConnectionId) {
+    prompt = (
+      await args.llm.complete({
+        connectionId: args.llmConnectionId,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: [`Character: ${characterName}`, appearance ? `Appearance: ${appearance}` : "", userPrompt].filter(Boolean).join("\n") },
+        ],
+        parameters: { temperature: 0.7, maxTokens: 800 },
+      })
+    ).trim();
+  }
+  if (!prompt) {
+    prompt = [
+      `selfie of ${characterName}`,
+      appearance,
+      args.commandContext,
+      "casual camera angle, expressive face, detailed lighting",
+      positive,
+    ]
+      .filter((part) => readString(part).trim())
+      .join(", ");
+  }
+  return { prompt, characterName };
+}
+
+async function generateSelfie(args: {
+  storage: StorageGateway;
+  integrations: IntegrationGateway | undefined;
+  llm?: LlmGateway;
+  llmConnectionId?: string | null;
+  chat: JsonRecord;
+  command: Extract<CharacterCommand, { type: "selfie" }>;
+  events: ConnectedCommandEvent[];
+  assistantAttachments: JsonRecord[];
+}): Promise<boolean> {
+  const metadata = parseRecord(args.chat.metadata);
+  const imageConnectionId = readString(metadata.imageGenConnectionId).trim();
+  const characterId = activeCharacterId(args.chat);
+  if (!imageConnectionId) {
+    eventsPushSelfieError(args.events, characterId, "No image generation connection configured for this chat.");
+    return false;
+  }
+  if (!args.integrations?.image) {
+    eventsPushSelfieError(args.events, characterId, "Image generation is not available.");
+    return false;
+  }
+
+  try {
+    const { prompt, characterName } = await buildSelfiePrompt({
+      storage: args.storage,
+      llm: args.llm,
+      llmConnectionId: args.llmConnectionId,
+      chat: args.chat,
+      commandContext: args.command.context,
+      characterId,
+    });
+    const negativePrompt = readString(metadata.selfieNegativePrompt).trim();
+    const size = parseSelfieSize(metadata.selfieResolution);
+    const image = await args.integrations.image.generate<{
+      base64?: string;
+      mimeType?: string;
+      image?: string;
+      provider?: string;
+      model?: string;
+    }>({
+      connectionId: imageConnectionId,
+      prompt,
+      negativePrompt: negativePrompt || undefined,
+      width: size.width,
+      height: size.height,
+    });
+    const mimeType = image.mimeType || "image/png";
+    const base64 = readString(image.base64).trim();
+    const imageUrl = readString(image.image).trim() || (base64 ? `data:${mimeType};base64,${base64}` : "");
+    if (!imageUrl) throw new Error("Image provider returned no image data.");
+
+    const gallery = await args.storage.create<JsonRecord>("gallery", {
+      chatId: readString(args.chat.id),
+      filePath: `selfie_${characterName.toLowerCase().replace(/\s+/g, "_")}.${imageExtension(mimeType)}`,
+      filename: `selfie_${characterName.toLowerCase().replace(/\s+/g, "_")}.${imageExtension(mimeType)}`,
+      url: imageUrl,
+      prompt,
+      provider: image.provider ?? "image_generation",
+      model: image.model ?? null,
+      width: size.width,
+      height: size.height,
+    });
+    const attachment = {
+      type: "image",
+      url: imageUrl,
+      filename: `selfie_${characterName.toLowerCase().replace(/\s+/g, "_")}.${imageExtension(mimeType)}`,
+      prompt,
+      galleryId: readString(gallery.id) || null,
+    };
+    args.assistantAttachments.push(attachment);
+    args.events.push({
+      type: "selfie",
+      data: {
+        characterId,
+        characterName,
+        imageUrl,
+        prompt,
+        galleryId: readString(gallery.id) || null,
+      },
+    });
+    return true;
+  } catch (error) {
+    eventsPushSelfieError(args.events, characterId, error instanceof Error ? error.message : "Image generation failed.");
+    return false;
+  }
+}
+
+function eventsPushSelfieError(events: ConnectedCommandEvent[], characterId: string | null, error: string): void {
+  events.push({ type: "selfie_error", data: { characterId, error } });
+}
+
+async function createSceneFromCommand(args: {
+  storage: StorageGateway;
+  llm?: LlmGateway;
+  chat: JsonRecord;
+  command: Extract<CharacterCommand, { type: "scene" }>;
+  events: ConnectedCommandEvent[];
+  llmConnectionId?: string | null;
+}): Promise<boolean> {
+  if (!args.llm) return false;
+  const chatId = readString(args.chat.id);
+  const planResult = await planRoleplayScene(
+    { storage: args.storage, llm: args.llm },
+    {
+      chatId,
+      prompt: [args.command.scenario, args.command.plan].filter(Boolean).join("\n\n"),
+      connectionId: args.llmConnectionId ?? null,
+    },
+  );
+  if (!planResult.plan) return false;
+  const plan = {
+    ...planResult.plan,
+    background: args.command.background || planResult.plan.background,
+  };
+  const created = await createRoleplayScene(args.storage, {
+    originChatId: chatId,
+    initiatorCharId: activeCharacterId(args.chat),
+    plan,
+    connectionId: args.llmConnectionId ?? null,
+  });
+  args.events.push({
+    type: "scene_created",
+    data: {
+      chatId: created.chatId,
+      chatName: created.chatName,
+      originChatId: chatId,
+      background: created.background,
+    },
+  });
+  return true;
+}
+
+async function applyScheduleUpdate(
+  storage: StorageGateway,
+  chat: JsonRecord,
+  command: Extract<CharacterCommand, { type: "schedule_update" }>,
+): Promise<boolean> {
+  const characterId = activeCharacterId(chat);
+  const chatId = readString(chat.id);
+  const metadata = parseRecord(chat.metadata);
+  const schedules = parseRecord(metadata.characterSchedules);
+  const update = {
+    status: command.status ?? "online",
+    activity: command.activity ?? "",
+    duration: command.duration ?? "",
+    updatedAt: nowIso(),
+  };
+  if (characterId) schedules[characterId] = update;
+  await storage.patchChatMetadata(chatId, { characterSchedules: schedules });
+  if (characterId) {
+    const row = await storage.get<JsonRecord>("characters", characterId);
+    if (row?.id) {
+      await storage.update("characters", characterId, {
+        conversationStatus: update.status,
+        conversationActivity: update.activity,
+      });
+    }
+  }
+  return true;
+}
+
 function characterDataFromCreate(command: CreateCharacterCommand): JsonRecord {
   return {
     name: command.name,
@@ -224,10 +473,13 @@ async function createLorebookEntries(storage: StorageGateway, lorebookId: string
 async function executeCommand(
   storage: StorageGateway,
   integrations: IntegrationGateway | undefined,
+  llm: LlmGateway | undefined,
+  llmConnectionId: string | null | undefined,
   chat: JsonRecord,
   command: CharacterCommand,
   createdNotes: JsonRecord[],
   events: ConnectedCommandEvent[],
+  assistantAttachments: JsonRecord[],
   visibleContent: string,
 ): Promise<{ name: string; suppressSourceMessage?: boolean } | null> {
   const chatId = readString(chat.id);
@@ -398,17 +650,24 @@ async function executeCommand(
       return { name: "dm" };
     }
     case "schedule_update":
+      return (await applyScheduleUpdate(storage, chat, command)) ? { name: "schedule_update" } : null;
     case "selfie":
+      return (await generateSelfie({
+        storage,
+        integrations,
+        llm,
+        llmConnectionId,
+        chat,
+        command,
+        events,
+        assistantAttachments,
+      }))
+        ? { name: "selfie" }
+        : null;
     case "scene":
-      createdNotes.push({
-        id: newId(command.type),
-        type: command.type,
-        content: JSON.stringify(command),
-        sourceChatId: chatId,
-        targetChatId: null,
-        createdAt: nowIso(),
-      });
-      return { name: command.type };
+      return (await createSceneFromCommand({ storage, llm, chat, command, events, llmConnectionId }))
+        ? { name: "scene" }
+        : null;
   }
 }
 
@@ -417,6 +676,8 @@ export async function persistConnectedCommandTags(
   chat: JsonRecord,
   content: string,
   integrations?: IntegrationGateway,
+  llm?: LlmGateway,
+  llmConnectionId?: string | null,
 ): Promise<ConnectedCommandResult> {
   const chatId = readString(chat.id);
   const existingNotes = parseArray(chat.notes).filter((entry): entry is JsonRecord => !!entry && typeof entry === "object");
@@ -424,12 +685,22 @@ export async function persistConnectedCommandTags(
   const parsed = parseCharacterCommands(content);
   const executedCommands: string[] = [];
   const events: ConnectedCommandEvent[] = [];
+  const assistantAttachments: JsonRecord[] = [];
   let suppressAssistantMessage = false;
 
   for (const command of parsed.commands) {
-    const executed = await executeCommand(storage, integrations, chat, command, createdNotes, events, parsed.cleanContent).catch(
-      () => null,
-    );
+    const executed = await executeCommand(
+      storage,
+      integrations,
+      llm,
+      llmConnectionId,
+      chat,
+      command,
+      createdNotes,
+      events,
+      assistantAttachments,
+      parsed.cleanContent,
+    ).catch(() => null);
     if (executed) {
       executedCommands.push(executed.name);
       suppressAssistantMessage = suppressAssistantMessage || executed.suppressSourceMessage === true;
@@ -445,6 +716,7 @@ export async function persistConnectedCommandTags(
     createdNotes,
     executedCommands,
     events,
+    assistantAttachments,
     suppressAssistantMessage,
   };
 }

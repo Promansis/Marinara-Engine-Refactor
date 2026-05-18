@@ -18,6 +18,14 @@ type StoredMessage = JsonRecord & {
   characterId?: string | null;
 };
 
+const SCENE_GUIDELINES = [
+  "Scene guidelines:",
+  "- Treat this as a focused roleplay scene branched from the originating conversation.",
+  "- Preserve character knowledge boundaries and relationship continuity from the origin chat.",
+  "- The user controls their persona. Never decide their strategic choices or exact dialogue.",
+  "- Continue naturally until the scene concludes or returns to the origin conversation.",
+].join("\n");
+
 export async function planRoleplayScene(
   capabilities: RoleplaySceneCapabilities,
   input: ScenePlanRequest,
@@ -98,6 +106,7 @@ export async function createRoleplayScene(
   input: SceneCreateRequest,
 ): Promise<SceneCreateResponse> {
   const originChat = await requireChat(storage, input.originChatId);
+  const originMeta = parseJsonObject(originChat.metadata);
   const plan = input.plan;
   const originCharacterIds = stringArray(originChat.characterIds);
   const characterIds = plan.characterIds.length ? plan.characterIds : originCharacterIds;
@@ -105,6 +114,12 @@ export async function createRoleplayScene(
   const description = plan.description || "A new scene begins.";
   const firstMessage = plan.firstMessage || "The scene begins.";
   const connectionId = input.connectionId || stringValue(originChat.connectionId) || null;
+  const sceneConversationContext = await buildSceneConversationContext(storage, input.originChatId);
+  const inheritedActiveLorebookIds = [
+    ...stringArray(originMeta.activeLorebookIds),
+    ...stringArray(originChat.activeLorebookIds),
+  ].filter((id, index, ids) => ids.indexOf(id) === index);
+  const sceneSystemPrompt = [plan.systemPrompt, SCENE_GUIDELINES].filter((part) => part.trim()).join("\n\n");
 
   const metadata: JsonRecord = {
     sceneOriginChatId: input.originChatId,
@@ -112,8 +127,10 @@ export async function createRoleplayScene(
     sceneDescription: description,
     sceneScenario: plan.scenario ?? null,
     sceneBackground: plan.background ?? null,
-    sceneSystemPrompt: plan.systemPrompt ?? null,
+    sceneSystemPrompt: sceneSystemPrompt || null,
     sceneRelationshipHistory: plan.relationshipHistory ?? null,
+    sceneConversationContext,
+    activeLorebookIds: inheritedActiveLorebookIds,
     sceneRating: plan.rating === "nsfw" ? "nsfw" : "sfw",
     sceneStatus: "active",
     enableMemoryRecall: true,
@@ -129,6 +146,7 @@ export async function createRoleplayScene(
     promptPresetId: originChat.promptPresetId ?? null,
     connectionId,
     connectedChatId: input.originChatId,
+    activeLorebookIds: inheritedActiveLorebookIds,
     metadata,
   });
   const sceneChatId = stringValue(sceneChat.id);
@@ -174,9 +192,10 @@ export async function concludeRoleplayScene(
 
   await createChatMessage(capabilities.storage, originChatId, {
     role: "narrator",
-    content: `The scene concluded.\n\n${summary}`,
+    content: formatSceneReturnMessage(sceneChat, summary),
   });
   await appendSceneMemory(capabilities.storage, originChatId, input.sceneChatId, summary);
+  await writeCharacterSceneMemories(capabilities.storage, sceneChat, summary);
   await patchChatMetadata(capabilities.storage, input.sceneChatId, { sceneStatus: "concluded" });
   await cleanOriginScenePointers(capabilities.storage, originChatId);
   await capabilities.storage.update("chats", input.sceneChatId, { connectedChatId: null });
@@ -219,6 +238,17 @@ export async function forkRoleplayScene(
   });
   const forkChatId = stringValue(forkChat.id);
   if (!forkChatId) throw new Error("Created fork chat has no id");
+
+  if (input.includePreSceneSummary !== false) {
+    const continuity = buildForkContinuityMessage(sceneMeta);
+    if (continuity) {
+      await createChatMessage(storage, forkChatId, {
+        role: "narrator",
+        content: continuity,
+        extra: { hiddenFromAi: true, isSceneContinuity: true },
+      });
+    }
+  }
 
   let skippedGuide = false;
   for (const message of await messagesForChat(storage, input.sceneChatId)) {
@@ -398,6 +428,68 @@ async function patchChatMetadata(storage: StorageGateway, chatId: string, patch:
   await storage.patchChatMetadata(chatId, patch);
 }
 
+async function buildSceneConversationContext(storage: StorageGateway, originChatId: string): Promise<string> {
+  return (await messagesForChat(storage, originChatId))
+    .slice(-24)
+    .map((message) => {
+      const role = stringValue(message.role) || "message";
+      const content = stringValue(message.content).trim();
+      return content ? `${role}: ${content}` : "";
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 12000);
+}
+
+function formatSceneReturnMessage(sceneChat: JsonRecord, summary: string): string {
+  const sceneName = stringValue(sceneChat.name).trim() || "the scene";
+  return [`The scene "${sceneName.replace(/^Scene:\s*/i, "")}" concluded.`, "", summary.trim()].join("\n");
+}
+
+function characterData(row: JsonRecord): JsonRecord {
+  const raw = row.data;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return isRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return isRecord(raw) ? raw : {};
+}
+
+async function writeCharacterSceneMemories(
+  storage: StorageGateway,
+  sceneChat: JsonRecord,
+  summary: string,
+): Promise<void> {
+  const sceneName = stringValue(sceneChat.name).replace(/^Scene:\s*/i, "").trim() || "Scene";
+  const createdAt = new Date().toISOString();
+  const summaryLine = `[Scene on ${createdAt.slice(0, 10)}: ${sceneName}] ${summary.trim()}`;
+  for (const characterId of stringArray(sceneChat.characterIds)) {
+    const row = await storage.get<JsonRecord>("characters", characterId);
+    if (!isRecord(row)) continue;
+    const data = characterData(row);
+    const extensions = isRecord(data.extensions) ? { ...data.extensions } : {};
+    const previous = Array.isArray(extensions.characterMemories) ? extensions.characterMemories : [];
+    extensions.characterMemories = [
+      ...previous.filter((memory) => {
+        const record = parseJsonObject(memory);
+        return stringValue(record.sceneChatId) !== stringValue(sceneChat.id);
+      }),
+      {
+        from: sceneName,
+        fromCharId: null,
+        sceneChatId: stringValue(sceneChat.id),
+        summary: summaryLine,
+        createdAt,
+      },
+    ].slice(-100);
+    await storage.update("characters", characterId, { data: { ...data, extensions } });
+  }
+}
+
 async function appendSceneMemory(
   storage: StorageGateway,
   originChatId: string,
@@ -456,6 +548,18 @@ function forkMetadata(sceneMeta: JsonRecord): JsonRecord {
   return Object.fromEntries(
     Object.entries(sceneMeta).filter(([key]) => !excluded.has(key) && !key.startsWith("scene")),
   );
+}
+
+function buildForkContinuityMessage(sceneMeta: JsonRecord): string | null {
+  const lines: string[] = [];
+  const context = stringValue(sceneMeta.sceneConversationContext).trim();
+  const relationship = stringValue(sceneMeta.sceneRelationshipHistory).trim();
+  const scenario = stringValue(sceneMeta.sceneScenario).trim();
+  if (context) lines.push("Origin conversation context:", context);
+  if (relationship) lines.push("Relationship history:", relationship);
+  if (scenario) lines.push("Scene premise:", scenario);
+  if (!lines.length) return null;
+  return ["Hidden continuity carried from the original scene branch.", "", ...lines].join("\n");
 }
 
 async function resolveConnectionId(

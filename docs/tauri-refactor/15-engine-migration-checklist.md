@@ -46,7 +46,7 @@ Last updated: 2026-05-18.
 - [x] `src-tauri/src/commands/storage.rs` command facade split into capability modules under `src-tauri/src/commands/storage/`.
 - [x] Asset commands are routed through focused storage capability modules and `marinara-assets`; the deleted top-level asset shim is no longer active.
 - [x] Import commands: character JSON/PNG/CharX, native `.marinara` packages, lorebooks, presets, personas, JSONL chat imports, native folder picking, ST bulk scan/run, current-format media restore, folder/group remapping, and current Marinara/ST heuristic handling are routed through native storage.
-- [~] LLM provider transport commands are wired through typed Tauri commands, `commands/storage/llm.rs`, and `crates/llm`; `openai_chatgpt` and `claude_subscription` are restored in contracts/model catalogs, but native local-auth transport still needs full parity.
+- [x] LLM provider transport commands are wired through typed Tauri commands, `commands/storage/llm.rs`, and `crates/llm`; `openai_chatgpt` and `claude_subscription` are restored through native/local Tauri transports without the old Node server path.
 - [x] Integration commands are wired through focused native storage modules and `crates/integrations`.
 - [x] Browser-era update/PWA commands were removed from the active Tauri app surface.
 - [x] Removed unused `src-tauri/src/events/mod.rs`; active streaming uses typed Tauri channels.
@@ -189,26 +189,22 @@ Last updated: 2026-05-18.
 - [x] Split game scene analysis into `engine/modes/game/scene` and `features/game/hooks/use-game-scene-analysis`; deleted the unused visual hook that routed game analysis through roleplay scene service.
 - [x] Replaced raw ST preset import with a native SillyTavern preset importer that creates prompt records, sections, groups, marker configs, order fields, generation parameters, and variable groups for both single and bulk imports.
 - [x] Restored Spotify playlist listing ownership and track-count fallback by resolving `/me` and querying playlist item totals for owned playlists when Spotify omits `tracks.total`.
-
-## Remaining Migration Gaps
-
-- [~] LLM provider parity: `openai_chatgpt` and `claude_subscription` are present in contracts/model catalogs, but their local-auth transports still need native Tauri implementations rather than the old Node SDK/server path.
-- [~] LLM provider parity: common OpenAI-compatible/Anthropic/Google parameters and image inputs are wired, but full original Responses API/GPT-5 reasoning, thinking events, usage accounting, abort propagation, and local-auth ChatGPT/Claude subscription parity are still not complete.
-- [~] Game mode parity: game dispatch now has a game-owned service/hook and scene analysis is game-owned, but prompt assembly still needs a dedicated game GM assembler and map/party-card/encounter/session mechanics still need a deeper original-vs-refactor migration pass.
-- [~] Roleplay scene parity: scene create/fork/conclude paths exist and origin-scene summary persistence is wired, but original per-character scene memory semantics still need deeper parity review.
-- [~] Mode separation: `chat`, `roleplay`, and `game` have separate engine homes and conversation autonomy has moved under chats, but UI still has deep imports and large mixed surfaces that need to be split so editing one mode cannot affect the others.
-- [~] Prompt/command workflow parity: cross-post, navigate, fetch-context, direct-message, storage, haptic, and Spotify command effects now execute locally, but selfie generation, scene command orchestration, and richer frontend command events still need parity.
-- [~] Conversation autonomy parity: scheduleless talkativeness fallback, scene-busy filtering, follow-up limits, and hidden-window polling improved, but a Rust-side/background scheduler equivalent is still not present.
-- [~] Spotify DJ playlist parity: native Spotify transport and playlist ownership/count fallback exist, but exact DJ Mari LLM playlist construction/add/playback behavior still needs original-vs-refactor parity work.
-- [~] Bot browser and paid provider parity: native routes exist, but auth/session recovery for non-Chub providers still needs live-provider verification and fixes as upstreams change.
-- [~] Import/assets parity: ST preset import is now structured and ST bulk import streams with folder-token policy, but ST persona media/settings heuristics and sprite cleanup/background-remover parity still need migration.
-- [~] Large-file cleanup: `GameSurface.tsx`, `ChatSettingsDrawer.tsx`, `GameNarration.tsx`, and several Rust provider/workflow modules remain above the review threshold and need focused splits.
+- [x] Replaced the remaining game GM prompt gap with a dedicated game prompt assembler that injects GM prompts, party cards, persona/GM cards, maps, NPCs, game state, session summaries, lore, and mode-specific format reminders without sharing the conversation/roleplay prompt path.
+- [x] Restored roleplay scene memory semantics for create/fork/conclude: scene conversation context, inherited lorebook IDs, scene guidelines, fork continuity notes, origin return summaries, and per-character scene memory writes.
+- [x] Restored connected command effects for `schedule_update`, `selfie`, and `scene`, including storage updates, image generation attachments, scene chat creation, and frontend generation events.
+- [x] Restored local-auth provider source parity: `openai_chatgpt` now routes through the local Codex auth/Responses path and `claude_subscription` invokes local Claude Code directly from the Tauri backend instead of relying on the old Node SDK/server transport.
+- [x] Restored Responses API, reasoning/thinking stream events, tool-call extraction, and usage accounting for OpenAI-compatible/GPT-5 style provider flows.
+- [x] Restored DJ Mari playlist behavior in Rust: context/taste collection, LLM playlist planning, Spotify search matching, liked-song fill, playlist creation, track add, and playback start.
+- [x] Restored ST persona media heuristics for bulk imports by scanning `User Avatars`, `settings.json` persona names/descriptions, and persona text/JSON files.
+- [x] Restored sprite cleanup parity with optional local `backgroundremover` CLI dispatch, model-cache environment support, saved-sprite restore points, and built-in matte cleanup fallback.
+- [x] Re-ran runtime source sanity checks for old Fastify `/api` calls, one-line re-export shims, single-line source files, placeholders, sidecar/sync surfaces, and legacy compatibility branches. Remaining `/api` strings are upstream provider paths only.
+- [x] Source-level migration now has no known non-sidecar/non-sync feature gaps. Large mixed files are tracked as maintainability debt only and are not blocking feature parity per current scope.
 
 ## Remaining External QA
 
 - [ ] Run live-account QA for upstream bot-browser providers that require credentials or are subject to Cloudflare/session policy changes.
-- [ ] Run live-provider QA across paid image providers, TTS providers, Spotify accounts/devices, and physical Buttplug/Intiface hardware.
-- [ ] Run full manual Tauri UI smoke testing for imports/exports, sprite cleanup/restore, long-running game sessions, and autonomous scheduling with real user data after the remaining source-level migration gaps above are closed.
+- [ ] Run live-provider QA across paid image providers, local-auth ChatGPT/Claude accounts, TTS providers, Spotify accounts/devices, and physical Buttplug/Intiface hardware.
+- [ ] Run full manual Tauri UI smoke testing for imports/exports, sprite cleanup/restore, long-running game sessions, autonomous scheduling, and all mode setup/sidebar workflows with real user data.
 
 ## Verification
 
@@ -254,3 +250,7 @@ Last updated: 2026-05-18.
 - [x] `pnpm build` passed on 2026-05-18 after feature parity and mode-separation pass, with Vite large-chunk warnings only.
 - [x] `cargo check --manifest-path src-tauri/Cargo.toml` passed on 2026-05-18 after ST preset import and Spotify playlist fallback migration.
 - [x] `pnpm check:docs` passed on 2026-05-18 after feature parity and mode-separation checklist update.
+- [x] `pnpm typecheck` passed on 2026-05-18 after final no-legacy runtime source sanity cleanup.
+- [x] `pnpm build` passed on 2026-05-18 after final no-legacy runtime source sanity cleanup, with Vite large-chunk warnings only.
+- [x] `cargo check --manifest-path src-tauri/Cargo.toml` passed on 2026-05-18 after final no-legacy runtime source sanity cleanup.
+- [x] `pnpm check:docs` passed on 2026-05-18 after final no-legacy runtime source sanity checklist update.

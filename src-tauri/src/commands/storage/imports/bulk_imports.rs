@@ -200,6 +200,75 @@ fn list_files(dir: &Path, extensions: &[&str], recursive: bool) -> Vec<PathBuf> 
     files
 }
 
+fn read_st_persona_settings(data_dir: &Path) -> (HashMap<String, String>, HashMap<String, String>) {
+    let settings_path = data_dir.join("settings.json");
+    let Ok(raw) = fs::read_to_string(settings_path) else {
+        return (HashMap::new(), HashMap::new());
+    };
+    let Ok(settings) = serde_json::from_str::<Value>(&raw) else {
+        return (HashMap::new(), HashMap::new());
+    };
+    let power_user = settings
+        .get("power_user")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let names = power_user
+        .get("personas")
+        .and_then(Value::as_object)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|(key, value)| {
+                    value
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(|value| (key.to_string(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let descriptions = power_user
+        .get("persona_descriptions")
+        .and_then(Value::as_object)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|(key, value)| {
+                    let description = value
+                        .as_str()
+                        .map(str::to_string)
+                        .or_else(|| value.get("description").and_then(Value::as_str).map(str::to_string))
+                        .unwrap_or_default();
+                    (!description.trim().is_empty()).then(|| (key.to_string(), description))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    (names, descriptions)
+}
+
+fn st_persona_scan_item(
+    data_dir: &Path,
+    path: &Path,
+    names: &HashMap<String, String>,
+    descriptions: &HashMap<String, String>,
+) -> Value {
+    let filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    json!({
+        "id": path_id("personas", data_dir, path),
+        "path": path.to_string_lossy(),
+        "name": names.get(&filename).cloned().unwrap_or_else(|| file_stem(path)),
+        "description": descriptions.get(&filename).cloned().unwrap_or_default(),
+        "modifiedAt": modified_at(path),
+        "media": true,
+    })
+}
+
 fn scan_item(category: &str, data_dir: &Path, path: &Path) -> Value {
     json!({
         "id": path_id(category, data_dir, path),
@@ -329,22 +398,40 @@ pub(super) fn scan_st_folder(body: Value) -> AppResult<Value> {
     .into_iter()
     .map(|path| scan_item("backgrounds", &data_dir, &path))
     .collect();
-    let mut persona_files = list_files(&data_dir.join("personas"), &[".json", ".txt"], false);
-    persona_files.extend(list_files(
-        &data_dir.join("User Avatars"),
-        &[".json", ".txt"],
-        false,
-    ));
+    let (persona_names, persona_descriptions) = read_st_persona_settings(&data_dir);
+    let mut persona_files = Vec::new();
+    for folder in ["User Avatars", "user avatars"] {
+        let avatar_dir = data_dir.join(folder);
+        if avatar_dir.is_dir() {
+            persona_files.extend(list_files(
+                &avatar_dir,
+                &[".png", ".jpg", ".jpeg", ".webp"],
+                false,
+            ));
+            break;
+        }
+    }
+    persona_files.extend(list_files(&data_dir.join("personas"), &[".json", ".txt"], false));
     persona_files.sort();
     persona_files.dedup();
     let personas: Vec<Value> = persona_files
         .into_iter()
         .map(|path| {
-            let mut item = scan_item("personas", &data_dir, &path);
-            if let Some(object) = item.as_object_mut() {
-                object.insert("description".to_string(), Value::String(String::new()));
+            let is_media = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp"))
+                .unwrap_or(false);
+            if is_media {
+                st_persona_scan_item(&data_dir, &path, &persona_names, &persona_descriptions)
+            } else {
+                let mut item = scan_item("personas", &data_dir, &path);
+                if let Some(object) = item.as_object_mut() {
+                    object.insert("description".to_string(), Value::String(String::new()));
+                    object.insert("media".to_string(), Value::Bool(false));
+                }
+                item
             }
-            item
         })
         .collect();
 
@@ -521,6 +608,39 @@ fn import_persona_file(state: &AppState, path: &Path) -> AppResult<Value> {
     import_persona_payload(state, payload, &fallback_name)
 }
 
+fn image_mime_from_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    }
+}
+
+fn import_persona_avatar_file(
+    state: &AppState,
+    path: &Path,
+    name: String,
+    description: String,
+) -> AppResult<Value> {
+    let bytes = fs::read(path)?;
+    let mime = image_mime_from_path(path);
+    let avatar = format!("data:{mime};base64,{}", general_purpose::STANDARD.encode(bytes));
+    let modified = modified_at(path);
+    let payload = json!({
+        "name": name,
+        "description": description,
+        "avatar": avatar,
+        "avatarPath": avatar,
+        "importedModifiedAt": modified,
+    });
+    import_persona_payload(state, payload, &file_stem(path))
+}
+
 fn copy_background_file(state: &AppState, path: &Path) -> AppResult<Value> {
     let name = path
         .file_name()
@@ -569,6 +689,7 @@ fn run_st_bulk_import_inner(
         .and_then(Value::as_str)
         .unwrap_or("all");
     let import_embedded = bool_option(options.get("importEmbeddedLorebook")).unwrap_or(true);
+    let (persona_names, persona_descriptions) = read_st_persona_settings(&data_dir);
 
     for id in selected_ids(&options, "characters") {
         let path = path_from_id(&data_dir, "characters", &id)?;
@@ -637,7 +758,32 @@ fn run_st_bulk_import_inner(
     for id in selected_ids(&options, "personas") {
         let path = path_from_id(&data_dir, "personas", &id)?;
         progress.emit_item("Personas", &path, &imported)?;
-        match import_persona_file(state, &path) {
+        let is_media = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp"))
+            .unwrap_or(false);
+        let result = if is_media {
+            let filename = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            import_persona_avatar_file(
+                state,
+                &path,
+                persona_names
+                    .get(&filename)
+                    .cloned()
+                    .unwrap_or_else(|| file_stem(&path)),
+                persona_descriptions
+                    .get(&filename)
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+        } else {
+            import_persona_file(state, &path)
+        };
+        match result {
             Ok(_) => bump_imported(&mut imported, "personas"),
             Err(error) => errors.push(Value::String(format!(
                 "{}: {}",

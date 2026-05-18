@@ -17,8 +17,13 @@ export interface CustomToolsGateway {
   execute<T = unknown>(input: { toolName: string; arguments: unknown }): Promise<T>;
 }
 
+export interface ImageGenerationGateway {
+  generate<T = unknown>(input: Record<string, unknown>): Promise<T>;
+}
+
 export interface IntegrationGateway {
   spotify: SpotifyGateway;
   haptic: HapticGateway;
   customTools: CustomToolsGateway;
+  image: ImageGenerationGateway;
 }

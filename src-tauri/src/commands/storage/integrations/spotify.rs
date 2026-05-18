@@ -6,6 +6,39 @@ use super::spotify_callback::start_callback_listener;
 const SPOTIFY_SCOPES: &str = "streaming user-modify-playback-state user-read-playback-state user-read-currently-playing user-read-private playlist-read-private playlist-modify-public playlist-modify-private user-library-read";
 const SPOTIFY_REDIRECT_URI: &str = "http://127.0.0.1:8754/spotify/callback";
 const AUTH_TTL_MS: u128 = 10 * 60_000;
+const DJ_MARI_MIN_TRACKS: usize = 25;
+const DJ_MARI_MAX_TRACKS: usize = 50;
+const DJ_MARI_OUTPUT_TOKENS: u64 = 8192;
+const RECENT_CHAT_MESSAGE_LIMIT: usize = 8;
+const LIKED_SONG_EXAMPLE_LIMIT: u32 = 50;
+const SPOTIFY_MIN_TITLE_SIMILARITY: f64 = 0.7;
+const SPOTIFY_MIN_ARTIST_SIMILARITY: f64 = 0.2;
+const SPOTIFY_MIN_MATCH_SCORE: f64 = 70.0;
+
+#[derive(Clone)]
+struct SpotifyTrack {
+    uri: String,
+    name: String,
+    artist: String,
+    album: Option<String>,
+    image_url: Option<String>,
+    duration_ms: Option<Value>,
+}
+
+#[derive(Clone)]
+struct GeneratedTrack {
+    title: String,
+    artist: String,
+    reason: Option<String>,
+}
+
+#[derive(Clone)]
+struct MatchedTrack {
+    track: SpotifyTrack,
+    requested_title: String,
+    requested_artist: String,
+    reason: Option<String>,
+}
 
 pub(crate) async fn spotify_call(
     state: &AppState,
@@ -490,29 +523,692 @@ async fn dj_mari_playlist(state: &AppState, body: Value) -> AppResult<Value> {
         query: HashMap::new(),
     };
     let credentials = resolve_credentials(state, &route, &body).await?;
-    let user = spotify_api(&credentials, "/me", "GET", None).await?;
-    if !(200..300).contains(&user.status) {
+    let playlist_name = format!("DJ Mari {}", today_label());
+    let liked_songs = fetch_liked_song_examples(&credentials).await?;
+    let context = build_dj_mari_context(state, &playlist_name, &liked_songs)?;
+    let generated_tracks = generate_dj_mari_playlist_plan(state, &playlist_name, context).await?;
+    let matched_tracks =
+        match_generated_tracks(&credentials, &generated_tracks, &liked_songs).await?;
+    if matched_tracks.len() < DJ_MARI_MIN_TRACKS {
         return Err(AppError::with_details(
-            "spotify_api_error",
-            "Spotify user lookup failed",
-            json!({ "status": user.status, "body": user.body }),
+            "spotify_dj_mari_match_error",
+            format!(
+                "DJ Mari only matched {} Spotify tracks. Need at least {DJ_MARI_MIN_TRACKS}; try again after adding more Liked Songs or using a broader model prompt.",
+                matched_tracks.len()
+            ),
+            json!({
+                "requestedTrackCount": generated_tracks.len(),
+                "matchedTrackCount": matched_tracks.len(),
+            }),
         ));
     }
-    let user_id = user
-        .json
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| AppError::new("spotify_api_error", "Spotify user id missing"))?;
-    let playlist_body = json!({
-        "name": "DJ Mari Mix",
-        "description": "Created by Marinara Engine.",
-        "public": false
-    });
-    let created = spotify_api(
+    let playlist = create_dj_mari_spotify_playlist(&credentials, &playlist_name, &matched_tracks)
+        .await?;
+    let playback = start_dj_mari_playlist_playback(
         &credentials,
-        &format!("/users/{}/playlists", percent_encode_component(user_id)),
+        playlist.get("playlistUri").and_then(Value::as_str).unwrap_or(""),
+        body.get("deviceId").and_then(Value::as_str),
+    )
+    .await;
+    let (playback_started, playback_error) = match playback {
+        Ok(value) => (
+            value.get("started").and_then(Value::as_bool).unwrap_or(false),
+            value.get("error").cloned().unwrap_or(Value::Null),
+        ),
+        Err(error) => (false, Value::String(error.message)),
+    };
+    Ok(json!({
+        "success": true,
+        "name": playlist.get("name").cloned().unwrap_or_else(|| json!(playlist_name)),
+        "playlistId": playlist.get("playlistId").cloned().unwrap_or(Value::Null),
+        "playlistUri": playlist.get("playlistUri").cloned().unwrap_or(Value::Null),
+        "playlistUrl": playlist.get("playlistUrl").cloned().unwrap_or(Value::Null),
+        "requestedTrackCount": generated_tracks.len(),
+        "trackCount": matched_tracks.len(),
+        "playbackStarted": playback_started,
+        "playbackError": playback_error,
+        "tracks": matched_tracks.iter().map(matched_track_json).collect::<Vec<_>>()
+    }))
+}
+
+fn today_label() -> String {
+    now_iso().chars().take(10).collect()
+}
+
+fn track_from_spotify_value(item: &Value) -> Option<SpotifyTrack> {
+    let uri = item.get("uri").and_then(Value::as_str)?.to_string();
+    if !uri.starts_with("spotify:track:") {
+        return None;
+    }
+    let artist = item
+        .get("artists")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|artist| artist.get("name").and_then(Value::as_str))
+                .filter(|name| !name.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Unknown artist".to_string());
+    Some(SpotifyTrack {
+        uri,
+        name: item
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Unknown track")
+            .to_string(),
+        artist,
+        album: item
+            .get("album")
+            .and_then(|album| album.get("name"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        image_url: item
+            .get("album")
+            .and_then(|album| album.get("images"))
+            .and_then(Value::as_array)
+            .and_then(|images| images.first())
+            .and_then(|image| image.get("url"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        duration_ms: item.get("duration_ms").cloned(),
+    })
+}
+
+async fn fetch_liked_song_examples(credentials: &SpotifyCredentials) -> AppResult<Vec<SpotifyTrack>> {
+    let response = spotify_api(
+        credentials,
+        &format!("/me/tracks?limit={LIKED_SONG_EXAMPLE_LIMIT}"),
+        "GET",
+        None,
+    )
+    .await?;
+    if !(200..300).contains(&response.status) {
+        return Err(AppError::with_details(
+            "spotify_api_error",
+            "Spotify liked songs failed",
+            json!({ "status": response.status, "body": response.body }),
+        ));
+    }
+    Ok(response
+        .json
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("track").and_then(track_from_spotify_value))
+        .collect())
+}
+
+fn parse_json_object(value: &Value) -> Map<String, Value> {
+    match value {
+        Value::Object(object) => object.clone(),
+        Value::String(raw) => serde_json::from_str::<Value>(raw)
+            .ok()
+            .and_then(|parsed| parsed.as_object().cloned())
+            .unwrap_or_default(),
+        _ => Map::new(),
+    }
+}
+
+fn short_text(value: &str, max_chars: usize) -> String {
+    let trimmed = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if trimmed.len() <= max_chars {
+        return trimmed;
+    }
+    let end = max_chars.saturating_sub(16);
+    format!("{} [truncated]", trimmed.chars().take(end).collect::<String>().trim_end())
+}
+
+fn record_string(record: &Value, key: &str) -> String {
+    record
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn character_profile(row: &Value) -> Value {
+    let data = parse_json_object(row.get("data").unwrap_or(&Value::Null));
+    let name = data
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| row.get("name").and_then(Value::as_str))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Unnamed character");
+    json!({
+        "id": row.get("id").and_then(Value::as_str).unwrap_or(""),
+        "name": name,
+        "description": short_text(data.get("description").and_then(Value::as_str).unwrap_or(""), 1200),
+        "personality": short_text(data.get("personality").and_then(Value::as_str).unwrap_or(""), 800)
+    })
+}
+
+fn persona_profile(row: &Value) -> Value {
+    json!({
+        "name": record_string(row, "name"),
+        "description": short_text(&record_string(row, "description"), 1600),
+        "personality": short_text(&record_string(row, "personality"), 900),
+        "appearance": short_text(&record_string(row, "appearance"), 700)
+    })
+}
+
+fn summarize_chat_metadata(chat: &Value) -> Value {
+    let metadata = parse_json_object(chat.get("metadata").unwrap_or(&Value::Null));
+    let mut out = Map::new();
+    for key in [
+        "summary",
+        "tags",
+        "gameActiveState",
+        "gameStoryArc",
+        "gameSpotifySourceType",
+    ] {
+        if let Some(value) = metadata.get(key).filter(|value| !value.is_null()) {
+            out.insert(key.to_string(), value.clone());
+        }
+    }
+    let setup = metadata
+        .get("gameSetupConfig")
+        .map(parse_json_object)
+        .unwrap_or_default();
+    for key in [
+        "setting",
+        "genre",
+        "tone",
+        "premise",
+        "playerGoals",
+        "additionalPreferences",
+    ] {
+        if let Some(value) = setup.get(key).filter(|value| !value.is_null()) {
+            out.insert(format!("setup.{key}"), value.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+fn most_recent_persona(chats: &[Value], personas: &[Value]) -> Option<Value> {
+    for chat in chats {
+        let persona_id = chat
+            .get("personaId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        if let Some(persona_id) = persona_id {
+            if let Some(persona) = personas
+                .iter()
+                .find(|persona| persona.get("id").and_then(Value::as_str) == Some(persona_id))
+            {
+                return Some(persona.clone());
+            }
+        }
+    }
+    personas
+        .iter()
+        .find(|persona| persona.get("isActive").and_then(Value::as_bool).unwrap_or(false))
+        .cloned()
+        .or_else(|| personas.first().cloned())
+}
+
+fn build_recent_chat_context(
+    state: &AppState,
+    chats: &[Value],
+    character_names: &HashMap<String, String>,
+    persona_name: Option<&str>,
+) -> AppResult<Vec<Value>> {
+    let mut contexts = Vec::new();
+    for mode in ["conversation", "roleplay", "game"] {
+        let Some(chat) = chats
+            .iter()
+            .filter(|chat| chat.get("mode").and_then(Value::as_str) == Some(mode))
+            .max_by_key(|chat| chat.get("updatedAt").and_then(Value::as_str).unwrap_or(""))
+        else {
+            continue;
+        };
+        let chat_id = chat.get("id").and_then(Value::as_str).unwrap_or("");
+        let mut messages = super::super::chats::messages_for_chat(state, chat_id)?;
+        let skip = messages.len().saturating_sub(RECENT_CHAT_MESSAGE_LIMIT);
+        messages = messages.into_iter().skip(skip).collect();
+        contexts.push(json!({
+            "mode": mode,
+            "chatName": record_string(chat, "name"),
+            "updatedAt": chat.get("updatedAt").cloned().unwrap_or(Value::Null),
+            "characterNames": string_array_from_value(chat.get("characterIds"))
+                .into_iter()
+                .map(|id| character_names.get(&id).cloned().unwrap_or(id))
+                .collect::<Vec<_>>(),
+            "context": summarize_chat_metadata(chat),
+            "latestMessages": messages.into_iter().map(|message| {
+                let character_id = message.get("characterId").and_then(Value::as_str);
+                let speaker = character_id
+                    .and_then(|id| character_names.get(id).cloned())
+                    .unwrap_or_else(|| {
+                        if message.get("role").and_then(Value::as_str) == Some("user") {
+                            persona_name.unwrap_or("User").to_string()
+                        } else {
+                            record_string(&message, "role")
+                        }
+                    });
+                json!({
+                    "role": message.get("role").and_then(Value::as_str).unwrap_or("assistant"),
+                    "speaker": speaker,
+                    "text": short_text(message.get("content").and_then(Value::as_str).unwrap_or(""), 900)
+                })
+            }).collect::<Vec<_>>()
+        }));
+    }
+    Ok(contexts)
+}
+
+fn most_used_character(chats: &[Value], characters: &[Value]) -> Value {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for chat in chats {
+        for id in string_array_from_value(chat.get("characterIds")) {
+            *counts.entry(id).or_insert(0) += 1;
+        }
+    }
+    let Some((id, count)) = counts.into_iter().max_by_key(|(_, count)| *count) else {
+        return Value::Null;
+    };
+    let Some(character) = characters
+        .iter()
+        .find(|character| character.get("id").and_then(Value::as_str) == Some(id.as_str()))
+        .map(character_profile)
+    else {
+        return Value::Null;
+    };
+    let mut object = character.as_object().cloned().unwrap_or_default();
+    object.insert("chatCount".to_string(), json!(count));
+    Value::Object(object)
+}
+
+fn build_dj_mari_context(
+    state: &AppState,
+    playlist_name: &str,
+    liked_songs: &[SpotifyTrack],
+) -> AppResult<Value> {
+    let mut chats = state.storage.list("chats")?;
+    chats.sort_by(|a, b| {
+        b.get("updatedAt")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(a.get("updatedAt").and_then(Value::as_str).unwrap_or(""))
+    });
+    let characters = state.storage.list("characters")?;
+    let personas = state.storage.list("personas")?;
+    let character_profiles = characters.iter().map(character_profile).collect::<Vec<_>>();
+    let character_names = character_profiles
+        .iter()
+        .filter_map(|character| {
+            Some((
+                character.get("id").and_then(Value::as_str)?.to_string(),
+                character.get("name").and_then(Value::as_str)?.to_string(),
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+    let persona = most_recent_persona(&chats, &personas).map(|row| persona_profile(&row));
+    let persona_name = persona
+        .as_ref()
+        .and_then(|persona| persona.get("name"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    Ok(json!({
+        "playlistName": playlist_name,
+        "desiredTrackCount": format!("{DJ_MARI_MIN_TRACKS}-{DJ_MARI_MAX_TRACKS}"),
+        "persona": persona.unwrap_or(Value::Null),
+        "characterNames": character_profiles.iter()
+            .filter_map(|character| character.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        "recentChats": build_recent_chat_context(state, &chats, &character_names, persona_name.as_deref())?,
+        "likedSongExamples": liked_songs.iter().map(|song| json!({
+            "name": song.name,
+            "artist": song.artist,
+            "album": song.album,
+        })).collect::<Vec<_>>(),
+        "optionalSuggestionSeed": most_used_character(&chats, &characters)
+    }))
+}
+
+fn resolve_dj_mari_llm_connection(state: &AppState) -> AppResult<Value> {
+    let spotify_agent = find_spotify_agent(state, None).ok();
+    if let Some(connection_id) = spotify_agent
+        .as_ref()
+        .and_then(|agent| agent.get("connectionId"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        return get_required(state, "connections", connection_id);
+    }
+    let connections = state.storage.list("connections")?;
+    connections
+        .iter()
+        .find(|connection| {
+            connection
+                .get("defaultForAgents")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .or_else(|| {
+            connections
+                .iter()
+                .find(|connection| {
+                    connection
+                        .get("isDefault")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                })
+                .cloned()
+        })
+        .or_else(|| connections.into_iter().next())
+        .ok_or_else(|| {
+            AppError::invalid_input(
+                "Configure a model connection for the Spotify DJ agent, or set a default agent connection.",
+            )
+        })
+}
+
+async fn generate_dj_mari_playlist_plan(
+    state: &AppState,
+    playlist_name: &str,
+    context: Value,
+) -> AppResult<Vec<GeneratedTrack>> {
+    let connection = resolve_dj_mari_llm_connection(state)?;
+    let request = marinara_llm::LlmRequest {
+        connection: super::super::llm::llm_connection_from_value(&connection)?,
+        messages: vec![
+            marinara_llm::LlmMessage {
+                role: "system".to_string(),
+                content: [
+                    "You are DJ Mari, a taste-aware Spotify playlist curator for Marinara Engine.",
+                    "Compose a private Spotify playlist for the user from their persona, characters, freshest chat context, and liked-song taste samples.",
+                    "Pick 25-50 specific real songs that are likely to exist in Spotify's catalogue. Prefer strong emotional fit, roleplay/game atmosphere, repeat-listening value, and a coherent flow.",
+                    "Do not include podcasts, local files, playlists, albums, duplicate songs, or fictional track names.",
+                    "Return strict JSON only: {\"tracks\":[{\"title\":\"Song title\",\"artist\":\"Primary artist\",\"reason\":\"short reason\"}]}."
+                ].join("\n"),
+                name: None,
+                images: Vec::new(),
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            marinara_llm::LlmMessage {
+                role: "user".to_string(),
+                content: serde_json::to_string(&context).unwrap_or_else(|_| {
+                    format!("Create playlist plan for {playlist_name}.")
+                }),
+                name: None,
+                images: Vec::new(),
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ],
+        parameters: json!({
+            "temperature": 0.75,
+            "maxTokens": DJ_MARI_OUTPUT_TOKENS
+        }),
+        tools: Vec::new(),
+    };
+    let result = marinara_llm::complete(request).await?;
+    let tracks = parse_generated_tracks(&result)?;
+    if tracks.is_empty() {
+        return Err(AppError::new(
+            "spotify_dj_mari_plan_error",
+            "DJ Mari returned no usable tracks.",
+        ));
+    }
+    Ok(tracks)
+}
+
+fn extract_json_text(text: &str) -> &str {
+    let trimmed = text.trim();
+    if let Some(start) = trimmed.find("```") {
+        if let Some(end) = trimmed[start + 3..].find("```") {
+            let block = &trimmed[start + 3..start + 3 + end];
+            return block
+                .strip_prefix("json")
+                .map(str::trim)
+                .unwrap_or_else(|| block.trim());
+        }
+    }
+    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if start <= end {
+            return &trimmed[start..=end];
+        }
+    }
+    trimmed
+}
+
+fn parse_generated_tracks(raw: &str) -> AppResult<Vec<GeneratedTrack>> {
+    let parsed: Value = serde_json::from_str(extract_json_text(raw)).map_err(|error| {
+        AppError::new(
+            "spotify_dj_mari_plan_error",
+            format!("DJ Mari returned a playlist plan that could not be parsed: {error}"),
+        )
+    })?;
+    let tracks = parsed
+        .get("tracks")
+        .and_then(Value::as_array)
+        .cloned()
+        .or_else(|| parsed.as_array().cloned())
+        .unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for item in tracks {
+        let object = parse_json_object(&item);
+        let title = object
+            .get("title")
+            .or_else(|| object.get("name"))
+            .or_else(|| object.get("track"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let artist = object
+            .get("artist")
+            .or_else(|| object.get("artists"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if title.is_empty() || artist.is_empty() {
+            continue;
+        }
+        let key = format!("{}:{}", normalize_spotify_text(&title), normalize_spotify_text(&artist));
+        if !seen.insert(key) {
+            continue;
+        }
+        out.push(GeneratedTrack {
+            title,
+            artist,
+            reason: object
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(|value| short_text(value, 180)),
+        });
+        if out.len() >= DJ_MARI_MAX_TRACKS {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+fn normalize_spotify_text(value: &str) -> String {
+    value
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn token_overlap_score(left: &str, right: &str) -> f64 {
+    let left_tokens = normalize_spotify_text(left)
+        .split_whitespace()
+        .map(ToOwned::to_owned)
+        .collect::<std::collections::HashSet<_>>();
+    if left_tokens.is_empty() {
+        return 0.0;
+    }
+    let right_tokens = normalize_spotify_text(right)
+        .split_whitespace()
+        .map(ToOwned::to_owned)
+        .collect::<std::collections::HashSet<_>>();
+    let matches = left_tokens
+        .iter()
+        .filter(|token| right_tokens.contains(*token))
+        .count();
+    matches as f64 / left_tokens.len() as f64
+}
+
+fn spotify_text_similarity(wanted: &str, actual: &str) -> f64 {
+    let wanted = normalize_spotify_text(wanted);
+    let actual = normalize_spotify_text(actual);
+    if wanted.is_empty() || actual.is_empty() {
+        return 0.0;
+    }
+    if wanted == actual {
+        return 1.0;
+    }
+    if actual.contains(&wanted) || wanted.contains(&actual) {
+        return 0.85;
+    }
+    token_overlap_score(&wanted, &actual)
+}
+
+fn spotify_match_quality(track: &SpotifyTrack, desired: &GeneratedTrack) -> (f64, f64, f64) {
+    let title_similarity = spotify_text_similarity(&desired.title, &track.name);
+    let artist_similarity = spotify_text_similarity(&desired.artist, &track.artist);
+    (
+        title_similarity * 60.0 + artist_similarity * 34.0,
+        title_similarity,
+        artist_similarity,
+    )
+}
+
+fn is_strong_spotify_match(track: &SpotifyTrack, desired: &GeneratedTrack) -> bool {
+    let (score, title_similarity, artist_similarity) = spotify_match_quality(track, desired);
+    title_similarity >= SPOTIFY_MIN_TITLE_SIMILARITY
+        && (artist_similarity >= SPOTIFY_MIN_ARTIST_SIMILARITY
+            || score >= SPOTIFY_MIN_MATCH_SCORE)
+}
+
+fn normalize_spotify_search_query(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(240)
+        .collect()
+}
+
+async fn search_spotify_track(
+    credentials: &SpotifyCredentials,
+    desired: &GeneratedTrack,
+) -> AppResult<Option<SpotifyTrack>> {
+    let compact_title = desired.title.replace('"', "").split_whitespace().collect::<Vec<_>>().join(" ");
+    let compact_artist = desired.artist.replace('"', "").split_whitespace().collect::<Vec<_>>().join(" ");
+    let queries = [
+        format!("track:\"{compact_title}\" artist:\"{compact_artist}\""),
+        format!("\"{compact_title}\" \"{compact_artist}\""),
+        format!("{compact_title} {compact_artist}"),
+    ];
+    let mut candidates_by_uri: HashMap<String, SpotifyTrack> = HashMap::new();
+    for query in queries {
+        let query = normalize_spotify_search_query(&query);
+        let params = form_urlencoded(&[("q", &query), ("type", "track"), ("limit", "5")]);
+        let response = spotify_api(credentials, &format!("/search?{params}"), "GET", None).await?;
+        if !(200..300).contains(&response.status) {
+            continue;
+        }
+        for item in response
+            .json
+            .get("tracks")
+            .and_then(|tracks| tracks.get("items"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(track) = track_from_spotify_value(item) {
+                candidates_by_uri.insert(track.uri.clone(), track);
+            }
+        }
+        let mut matches = candidates_by_uri
+            .values()
+            .filter(|track| is_strong_spotify_match(track, desired))
+            .cloned()
+            .collect::<Vec<_>>();
+        matches.sort_by(|a, b| {
+            spotify_match_quality(b, desired)
+                .0
+                .partial_cmp(&spotify_match_quality(a, desired).0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        if let Some(best) = matches.into_iter().next() {
+            return Ok(Some(best));
+        }
+    }
+    Ok(None)
+}
+
+async fn match_generated_tracks(
+    credentials: &SpotifyCredentials,
+    generated: &[GeneratedTrack],
+    liked_fallbacks: &[SpotifyTrack],
+) -> AppResult<Vec<MatchedTrack>> {
+    let mut matched = Vec::new();
+    let mut seen_uris = std::collections::HashSet::new();
+    for desired in generated {
+        if matched.len() >= DJ_MARI_MAX_TRACKS {
+            break;
+        }
+        if let Some(track) = search_spotify_track(credentials, desired).await? {
+            if seen_uris.insert(track.uri.clone()) {
+                matched.push(MatchedTrack {
+                    track,
+                    requested_title: desired.title.clone(),
+                    requested_artist: desired.artist.clone(),
+                    reason: desired.reason.clone(),
+                });
+            }
+        }
+    }
+    for liked in liked_fallbacks {
+        if matched.len() >= DJ_MARI_MIN_TRACKS {
+            break;
+        }
+        if seen_uris.insert(liked.uri.clone()) {
+            matched.push(MatchedTrack {
+                track: liked.clone(),
+                requested_title: liked.name.clone(),
+                requested_artist: liked.artist.clone(),
+                reason: Some("Fallback from the user's Liked Songs to keep the playlist full.".to_string()),
+            });
+        }
+    }
+    Ok(matched.into_iter().take(DJ_MARI_MAX_TRACKS).collect())
+}
+
+async fn create_dj_mari_spotify_playlist(
+    credentials: &SpotifyCredentials,
+    name: &str,
+    tracks: &[MatchedTrack],
+) -> AppResult<Value> {
+    let created = spotify_api(
+        credentials,
+        "/me/playlists",
         "POST",
-        Some(playlist_body),
+        Some(json!({
+            "name": name,
+            "public": false,
+            "collaborative": false,
+            "description": "Created by DJ Mari in Marinara Engine."
+        })),
     )
     .await?;
     if !(200..300).contains(&created.status) {
@@ -522,14 +1218,104 @@ async fn dj_mari_playlist(state: &AppState, body: Value) -> AppResult<Value> {
             json!({ "status": created.status, "body": created.body }),
         ));
     }
+    let playlist_id = created
+        .json
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::new("spotify_api_error", "Spotify playlist id missing"))?;
+    let playlist_uri = created
+        .json
+        .get("uri")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::new("spotify_api_error", "Spotify playlist uri missing"))?;
+    let uris = tracks
+        .iter()
+        .map(|track| Value::String(track.track.uri.clone()))
+        .collect::<Vec<_>>();
+    let added = spotify_api(
+        credentials,
+        &format!("/playlists/{}/items", percent_encode_component(playlist_id)),
+        "POST",
+        Some(json!({ "uris": uris })),
+    )
+    .await?;
+    if !(200..300).contains(&added.status) {
+        return Err(AppError::with_details(
+            "spotify_api_error",
+            "Spotify add tracks failed",
+            json!({ "status": added.status, "body": added.body }),
+        ));
+    }
     Ok(json!({
-        "success": true,
-        "name": created.json.get("name").and_then(Value::as_str).unwrap_or("DJ Mari Mix"),
+        "name": name,
+        "playlistId": playlist_id,
+        "playlistUri": playlist_uri,
         "playlistUrl": created.json.get("external_urls").and_then(|urls| urls.get("spotify")).cloned().unwrap_or(Value::Null),
-        "requestedTrackCount": 0,
-        "trackCount": 0,
-        "playbackStarted": false
+        "trackCount": tracks.len()
     }))
+}
+
+async fn start_dj_mari_playlist_playback(
+    credentials: &SpotifyCredentials,
+    playlist_uri: &str,
+    device_id: Option<&str>,
+) -> AppResult<Value> {
+    let device_id = device_id.filter(|value| !value.trim().is_empty());
+    if let Some(device_id) = device_id {
+        let _ = spotify_api(
+            credentials,
+            "/me/player",
+            "PUT",
+            Some(json!({ "device_ids": [device_id], "play": false })),
+        )
+        .await;
+    }
+    let path = spotify_control_path("/me/player/play", device_id);
+    let response = spotify_api(
+        credentials,
+        &path,
+        "PUT",
+        Some(json!({ "context_uri": playlist_uri })),
+    )
+    .await?;
+    if !(200..300).contains(&response.status) && response.status != 204 {
+        return Ok(json!({
+            "started": false,
+            "error": spotify_error_message(&response.body, "Spotify could not start the new playlist.")
+        }));
+    }
+    Ok(json!({ "started": true, "error": Value::Null }))
+}
+
+fn spotify_error_message(body: &str, fallback: &str) -> String {
+    if body.trim().is_empty() {
+        return fallback.to_string();
+    }
+    if let Ok(json) = serde_json::from_str::<Value>(body) {
+        if let Some(message) = json
+            .get("error")
+            .and_then(|error| error.get("message").or_else(|| error.as_str().map(|_| error)))
+            .and_then(Value::as_str)
+            .or_else(|| json.get("message").and_then(Value::as_str))
+        {
+            return message.to_string();
+        }
+    }
+    body.chars().take(300).collect()
+}
+
+fn matched_track_json(track: &MatchedTrack) -> Value {
+    json!({
+        "uri": track.track.uri,
+        "name": track.track.name,
+        "artist": track.track.artist,
+        "album": track.track.album,
+        "imageUrl": track.track.image_url,
+        "durationMs": track.track.duration_ms,
+        "requestedTitle": track.requested_title,
+        "requestedArtist": track.requested_artist,
+        "reason": track.reason
+    })
 }
 
 async fn player_control(

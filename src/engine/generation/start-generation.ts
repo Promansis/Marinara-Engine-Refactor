@@ -238,6 +238,8 @@ async function saveAssistantMessage(args: {
   content: string;
   agentResults: AgentResult[];
   noteCount: number;
+  attachments?: JsonRecord[];
+  usage?: unknown;
 }): Promise<unknown | null> {
   if (args.input.impersonate === true) return null;
 
@@ -249,11 +251,13 @@ async function saveAssistantMessage(args: {
   return args.storage.createChatMessage(args.input.chatId, {
     role: "assistant",
     content: args.content,
+    extra: args.attachments?.length ? { attachments: args.attachments } : {},
     generationInfo: {
       connectionId: readString(args.connection.id) || null,
       model: readString(args.connection.model) || null,
       agentResults: args.agentResults.length,
       notes: args.noteCount,
+      usage: args.usage ?? null,
     },
   });
 }
@@ -387,6 +391,7 @@ export async function* startGeneration(
     const parallelAgents = runtime?.runParallel() ?? Promise.resolve<AgentResult[]>([]);
     yield { type: "phase", data: "Calling model..." };
     let content = "";
+    let usage: unknown = null;
     for await (const chunk of deps.llm.stream(
       {
         connectionId: readString(connection.id) || input.connectionId,
@@ -399,6 +404,10 @@ export async function* startGeneration(
       if (chunk.type === "token" && chunk.text) {
         content += chunk.text;
         yield { type: "token", data: chunk.text };
+      } else if (chunk.type === "thinking" && chunk.text) {
+        yield { type: "thinking", data: chunk.text };
+      } else if (chunk.type === "usage") {
+        usage = chunk.data ?? null;
       }
     }
 
@@ -409,7 +418,14 @@ export async function* startGeneration(
     }
     const allAgentResults = [...(runtime?.preResults ?? []), ...parallelResults, ...postResults, ...agentEvents];
     content = await applyRuntimeRegexScripts(deps.storage, "ai_output", content);
-    const connected = await persistConnectedCommandTags(deps.storage, chat, content, deps.integrations);
+    const connected = await persistConnectedCommandTags(
+      deps.storage,
+      chat,
+      content,
+      deps.integrations,
+      deps.llm,
+      readString(connection.id) || input.connectionId || null,
+    );
     for (const event of connected.events) yield event;
     const saved = connected.suppressAssistantMessage
       ? null
@@ -421,6 +437,8 @@ export async function* startGeneration(
           content: connected.displayContent,
           agentResults: allAgentResults,
           noteCount: connected.createdNotes.length + connected.executedCommands.length,
+          attachments: connected.assistantAttachments,
+          usage,
         });
     await persistAgentResults(deps.storage, chatId, messageId(saved), allAgentResults);
     if (saved) yield { type: "assistant_message", data: saved };
@@ -434,6 +452,7 @@ export async function* startGeneration(
   );
   yield { type: "phase", data: "Calling model..." };
   let content = "";
+  let usage: unknown = null;
   for await (const chunk of deps.llm.stream(
     {
       connectionId: readString(connection.id) || input.connectionId,
@@ -446,10 +465,21 @@ export async function* startGeneration(
     if (chunk.type === "token" && chunk.text) {
       content += chunk.text;
       yield { type: "token", data: chunk.text };
+    } else if (chunk.type === "thinking" && chunk.text) {
+      yield { type: "thinking", data: chunk.text };
+    } else if (chunk.type === "usage") {
+      usage = chunk.data ?? null;
     }
   }
   content = await applyRuntimeRegexScripts(deps.storage, "ai_output", content);
-  const connected = await persistConnectedCommandTags(deps.storage, chat, content, deps.integrations);
+  const connected = await persistConnectedCommandTags(
+    deps.storage,
+    chat,
+    content,
+    deps.integrations,
+    deps.llm,
+    readString(connection.id) || input.connectionId || null,
+  );
   for (const event of connected.events) yield event;
   const saved = connected.suppressAssistantMessage
     ? null
@@ -458,10 +488,12 @@ export async function* startGeneration(
         chat,
         input,
         connection,
-        content: connected.displayContent,
-        agentResults: [],
-        noteCount: connected.createdNotes.length + connected.executedCommands.length,
-      });
+      content: connected.displayContent,
+      agentResults: [],
+      noteCount: connected.createdNotes.length + connected.executedCommands.length,
+      attachments: connected.assistantAttachments,
+      usage,
+    });
   if (saved) yield { type: "assistant_message", data: saved };
   yield { type: "done" };
 }

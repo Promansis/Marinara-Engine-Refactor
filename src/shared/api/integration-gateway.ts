@@ -1,4 +1,5 @@
 import type { IntegrationGateway } from "../../engine/capabilities/integrations";
+import { imageGenerationApi } from "./image-generation-api";
 import { spotifyApi } from "./integration-utility-api";
 import { invokeTauri } from "./tauri-client";
 
@@ -23,5 +24,8 @@ export const integrationGateway: IntegrationGateway = {
   customTools: {
     execute: <T = unknown>(input: { toolName: string; arguments: unknown }) =>
       invokeTauri<T>("custom_tool_execute", { body: input }),
+  },
+  image: {
+    generate: <T = unknown>(input: Record<string, unknown>) => imageGenerationApi.generate<T>(input),
   },
 };
