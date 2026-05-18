@@ -22,6 +22,8 @@ Last updated: 2026-05-18.
 - [x] Removed direct browser `fetch('/api/...')` calls for local Fastify routes; local app calls now go through Tauri API adapters or local TypeScript helpers.
 - [x] Removed remaining active source `fetch()` calls; non-API blob loading no longer uses browser fetch.
 - [x] Removed sidecar from active onboarding, agent, connection, and game scene UI; sidecar and sync remain deferred scope only.
+- [x] Ported original default seed data into Tauri startup: Professor Mari's built-in character card, her assistant prompt payload, Marinara's Universal Preset and related prompt rows, original conversation/roleplay/visual-novel chat presets, default regex scripts, and original image-generation UI size defaults now seed from bundled `resources/default-data/db` files when missing.
+- [x] Seeded Professor Mari's built-in conversation with her original greeting and protected both the main assistant character and conversation from normal delete paths.
 
 ## TypeScript Engine Layers
 

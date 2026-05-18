@@ -1,4 +1,5 @@
 use super::shared;
+use crate::builtins::is_protected_record;
 use crate::state::AppState;
 use marinara_core::AppError;
 use serde_json::{json, Value};
@@ -97,6 +98,24 @@ pub fn storage_delete(
     entity: String,
     id: String,
 ) -> Result<Value, AppError> {
+    if is_protected_record(&entity, &id) {
+        return Err(AppError::invalid_input(
+            "Built-in Professor Mari cannot be deleted",
+        ));
+    }
+    if entity == "messages" {
+        if let Some(message) = state.storage.get("messages", &id)? {
+            let is_mari_message = message
+                .get("chatId")
+                .and_then(Value::as_str)
+                .is_some_and(|chat_id| is_protected_record("chats", chat_id));
+            if is_mari_message {
+                return Err(AppError::invalid_input(
+                    "Built-in Professor Mari conversation messages cannot be deleted",
+                ));
+            }
+        }
+    }
     let deleted = state.storage.delete(&entity, &id)?;
     Ok(json!({ "deleted": deleted }))
 }

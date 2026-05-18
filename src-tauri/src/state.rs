@@ -4,6 +4,8 @@ use marinara_storage::FileStorage;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
+use crate::seed_defaults::seed_bundled_defaults;
+
 #[derive(Clone)]
 pub struct AppState {
     pub storage: FileStorage,
@@ -22,8 +24,21 @@ impl AppState {
         let storage = FileStorage::new(data_dir.join("data"))?;
         let game_assets = AssetService::new(data_dir.join("game-assets"))?;
         let backgrounds = AssetService::new(data_dir.join("backgrounds"))?;
+        let mut default_data_roots = Vec::new();
         if let Ok(resource_dir) = app.path().resource_dir() {
-            let default_data = resource_dir.join("resources").join("default-data");
+            default_data_roots.push(resource_dir.join("resources").join("default-data"));
+        }
+        default_data_roots.push(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("resources")
+                .join("default-data"),
+        );
+
+        for default_data in default_data_roots {
+            if !default_data.exists() {
+                continue;
+            }
+            seed_bundled_defaults(&storage, &default_data)?;
             game_assets.seed_missing_from(&default_data.join("game-assets"))?;
             backgrounds.seed_missing_from(&default_data.join("backgrounds"))?;
         }

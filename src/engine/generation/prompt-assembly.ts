@@ -22,6 +22,9 @@ import {
   type JsonRecord,
 } from "./runtime-records";
 
+const PROFESSOR_MARI_ID = "__professor_mari__";
+const MARI_ASSISTANT_PROMPT_SETTINGS_KEY = "professor-mari-assistant-prompt";
+
 export interface GenerationCharacterContext {
   id: string;
   name: string;
@@ -465,7 +468,7 @@ async function loadDefaultPromptId(storage: StorageGateway): Promise<string | nu
 }
 
 async function loadPromptSections(storage: StorageGateway, presetId: string): Promise<PromptSectionRecord[]> {
-  const sections = await storage.list<PromptSectionRecord>(`prompts/${encodeURIComponent(presetId)}/sections`);
+  const sections = await storage.list<PromptSectionRecord>("prompt-sections", { filters: { presetId } });
   return sections.filter(isRecord).sort(bySortOrder);
 }
 
@@ -596,6 +599,12 @@ function mariContextBlock(chat: JsonRecord): string {
     })
     .filter(Boolean);
   return entries.length ? `Fetched app context:\n${entries.join("\n\n")}` : "";
+}
+
+async function loadMariAssistantPrompt(storage: StorageGateway, characters: GenerationCharacterContext[]): Promise<string> {
+  if (!characters.some((character) => character.id === PROFESSOR_MARI_ID)) return "";
+  const record = await storage.get<JsonRecord>("app-settings", MARI_ASSISTANT_PROMPT_SETTINGS_KEY);
+  return readString(record?.value).trim();
 }
 
 function fallbackSystemPrompt(input: PromptAssemblyInput, args: {
@@ -1022,6 +1031,7 @@ export async function assembleGenerationPrompt(
     readNumber(input.connection.maxContext, 0) || undefined,
   );
   const fetchedContextBlock = mariContextBlock(input.chat);
+  const mariAssistantPrompt = await loadMariAssistantPrompt(storage, characters);
   const defaultPrompt = await loadDefaultPromptId(storage);
   const presetId = promptPresetId(input.chat, input.connection, input.request, defaultPrompt);
   const wrapFormat = (readString(input.chat.wrapFormat) || readString(input.connection.wrapFormat) || "xml") as WrapFormat;
@@ -1107,6 +1117,14 @@ export async function assembleGenerationPrompt(
     }
     messages.push(gameReminder!);
   } else {
+    if (chatMode === "conversation" && mariAssistantPrompt) {
+      const firstSystemIndex = messages.findIndex((message) => message.role === "system");
+      messages.splice(firstSystemIndex >= 0 ? firstSystemIndex + 1 : 0, 0, {
+        role: "system",
+        content: mariAssistantPrompt,
+        contextKind: "prompt",
+      });
+    }
     const sceneBlock = buildRoleplayScenePromptBlock(input.chat, characters, persona);
     if (sceneBlock) {
       const firstSystemIndex = messages.findIndex((message) => message.role === "system");

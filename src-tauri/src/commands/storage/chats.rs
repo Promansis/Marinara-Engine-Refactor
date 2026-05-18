@@ -1,5 +1,6 @@
 use super::shared::*;
 use super::*;
+use crate::builtins::is_protected_record;
 
 const MEMORY_CHUNK_SIZE: usize = 5;
 const MEMORY_EMBEDDING_DIMS: usize = 256;
@@ -148,6 +149,11 @@ pub(crate) fn bulk_delete_messages(
     chat_id: &str,
     body: Value,
 ) -> AppResult<Value> {
+    if is_protected_record("chats", chat_id) {
+        return Err(AppError::invalid_input(
+            "Built-in Professor Mari conversation messages cannot be deleted",
+        ));
+    }
     let ids = body
         .get("messageIds")
         .and_then(Value::as_array)
@@ -391,6 +397,9 @@ pub(crate) fn delete_chat_group(state: &AppState, group_id: &str) -> AppResult<V
     let mut deleted = 0;
     for chat in chats {
         if let Some(id) = chat.get("id").and_then(Value::as_str) {
+            if is_protected_record("chats", id) {
+                continue;
+            }
             delete_chat_with_messages(state, id)?;
             deleted += 1;
         }
@@ -437,6 +446,11 @@ pub(crate) fn branch_chat(state: &AppState, chat_id: &str, body: Value) -> AppRe
 }
 
 pub(crate) fn delete_chat_with_messages(state: &AppState, chat_id: &str) -> AppResult<()> {
+    if is_protected_record("chats", chat_id) {
+        return Err(AppError::invalid_input(
+            "Built-in Professor Mari cannot be deleted",
+        ));
+    }
     for message in messages_for_chat(state, chat_id)? {
         if let Some(id) = message.get("id").and_then(Value::as_str) {
             state.storage.delete("messages", id)?;

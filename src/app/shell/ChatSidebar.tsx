@@ -57,6 +57,12 @@ import { parseChatMetadata } from "../../shared/lib/chat-display";
 
 type ChatSortOption = "newest" | "oldest" | "name-asc" | "name-desc";
 
+const PROFESSOR_MARI_CHAT_ID = "__professor_mari_chat__";
+
+function isProtectedProfessorMariChat(chat: Pick<Chat, "id"> & { protected?: boolean; isBuiltIn?: boolean }): boolean {
+  return chat.id === PROFESSOR_MARI_CHAT_ID || chat.protected === true || chat.isBuiltIn === true;
+}
+
 function getChatTags(chat: Pick<Chat, "metadata">): string[] {
   return Array.isArray(chat.metadata?.tags)
     ? chat.metadata.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
@@ -560,20 +566,22 @@ export function ChatSidebar() {
 
   const handleBatchDelete = useCallback(async () => {
     if (selectedChatIds.size === 0) return;
+    const deletableIds = Array.from(selectedChatIds).filter((id) => id !== PROFESSOR_MARI_CHAT_ID);
+    if (deletableIds.length === 0) return;
     if (
       !(await showConfirmDialog({
         title: "Delete Chats",
-        message: `Delete ${selectedChatIds.size} chat${selectedChatIds.size > 1 ? "s" : ""}?`,
+        message: `Delete ${deletableIds.length} chat${deletableIds.length > 1 ? "s" : ""}?`,
         confirmLabel: "Delete",
         tone: "destructive",
       }))
     ) {
       return;
     }
-    for (const id of selectedChatIds) {
+    for (const id of deletableIds) {
       deleteChat.mutate(id);
     }
-    if (activeChatId && selectedChatIds.has(activeChatId)) setActiveChatId(null);
+    if (activeChatId && deletableIds.includes(activeChatId)) setActiveChatId(null);
     exitMultiSelect();
   }, [selectedChatIds, deleteChat, activeChatId, setActiveChatId, exitMultiSelect]);
 
@@ -599,6 +607,7 @@ export function ChatSidebar() {
     const cfg = MODE_CONFIG[chat.mode] ?? MODE_CONFIG.conversation;
     const isActive = activeChatId === chat.id || (chat.groupId != null && chat.groupId === activeGroupId);
     const isSelected = selectedChatIds.has(chat.id);
+    const isProtected = isProtectedProfessorMariChat(chat);
     return (
       <div
         role="button"
@@ -607,6 +616,7 @@ export function ChatSidebar() {
         data-chat-id={chat.id}
         onClick={async () => {
           if (multiSelectMode) {
+            if (isProtected) return;
             toggleSelectChat(chat.id);
             return;
           }
@@ -639,7 +649,7 @@ export function ChatSidebar() {
         )}
       >
         {/* Multi-select checkbox */}
-        {multiSelectMode && (
+        {multiSelectMode && !isProtected && (
           <div className="shrink-0 text-[var(--primary)]">
             {isSelected ? (
               <CheckSquare size="0.875rem" />
@@ -817,10 +827,11 @@ export function ChatSidebar() {
         )}
 
         {/* Delete button */}
-        {!multiSelectMode && (
+        {!multiSelectMode && !isProtected && (
           <button
             onClick={async (e) => {
               e.stopPropagation();
+              if (isProtected) return;
               if (branchCount > 1 && chat.groupId) {
                 setDeleteTarget({ chatId: chat.id, groupId: chat.groupId, branchCount });
               } else {
