@@ -9,6 +9,7 @@ const DEFAULT_TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
 const DEFAULT_NOVELAI_BASE_URL: &str = "https://image.novelai.net";
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 const DEFAULT_XAI_BASE_URL: &str = "https://api.x.ai/v1";
+const DEFAULT_POLLINATIONS_BASE_URL: &str = "https://image.pollinations.ai";
 const DEFAULT_HORDE_BASE_URL: &str = "https://stablehorde.net/api/v2";
 const DEFAULT_AUTOMATIC1111_BASE_URL: &str = "http://localhost:7860";
 const DEFAULT_COMFYUI_BASE_URL: &str = "http://127.0.0.1:8188";
@@ -88,15 +89,85 @@ pub(crate) async fn generate_image_with_options(
     }
 }
 
-fn image_source(connection: &Value) -> String {
-    connection
+pub(crate) fn image_source(connection: &Value) -> String {
+    let explicit = connection
         .get("imageGenerationSource")
         .or_else(|| connection.get("imageService"))
         .and_then(Value::as_str)
         .or_else(|| connection.get("service").and_then(Value::as_str))
         .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase()
+        .trim();
+    let model = connection
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let base_url = connection
+        .get("baseUrl")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    infer_image_source(if explicit.is_empty() { model } else { explicit }, base_url)
+}
+
+fn infer_image_source(model_or_source: &str, base_url: &str) -> String {
+    let model = model_or_source.trim().to_ascii_lowercase();
+    let url = base_url.trim().to_ascii_lowercase();
+    match model.as_str() {
+        "openai" | "stability" | "togetherai" | "novelai" | "pollinations" | "horde"
+        | "blockentropy" | "openrouter" | "xai" | "comfyui" | "automatic1111"
+        | "runpod_comfyui" | "gemini_image" | "nanogpt" => return model,
+        "drawthings" => return "automatic1111".to_string(),
+        _ => {}
+    }
+    if url.contains("nano-gpt.com") {
+        return "nanogpt".to_string();
+    }
+    if url.contains("openrouter.ai") {
+        return "openrouter".to_string();
+    }
+    if url.contains("api.x.ai") || url.contains("x.ai") {
+        return "xai".to_string();
+    }
+    if (model.starts_with("grok-") && model.contains("image"))
+        || (model.contains("grok") && model.contains("imagine"))
+    {
+        return "xai".to_string();
+    }
+    if model.starts_with("dall-e") || model.starts_with("gpt-image") || url.contains("openai.com") {
+        return "openai".to_string();
+    }
+    if model.starts_with("sd3") || url.contains("stability.ai") {
+        return "stability".to_string();
+    }
+    if model.contains("nai-diffusion") || url.contains("novelai.net") {
+        return "novelai".to_string();
+    }
+    if model == "pollinations" || url.contains("pollinations.ai") {
+        return "pollinations".to_string();
+    }
+    if model.contains("black-forest") || model.contains("flux") || url.contains("together.xyz") {
+        return "togetherai".to_string();
+    }
+    if url.contains("stablehorde.net") {
+        return "horde".to_string();
+    }
+    if url.contains("blockentropy") {
+        return "blockentropy".to_string();
+    }
+    if url.contains(":8188") || url.contains("comfyui") {
+        return "comfyui".to_string();
+    }
+    if url.contains("runpod.ai") {
+        return "runpod_comfyui".to_string();
+    }
+    if url.contains(":7860") && !url.contains("drawthings") {
+        return "automatic1111".to_string();
+    }
+    if (model.contains("gemini") && model.contains("image")) || model.contains("imagen") {
+        return "gemini_image".to_string();
+    }
+    "openai".to_string()
 }
 
 fn connection_model(connection: &Value, fallback: &str) -> String {
@@ -116,13 +187,14 @@ fn connection_api_key(connection: &Value) -> String {
         .to_string()
 }
 
-fn connection_base_url(connection: &Value, source: &str) -> String {
+pub(crate) fn connection_base_url(connection: &Value, source: &str) -> String {
     let fallback = match source {
         "stability" => DEFAULT_STABILITY_BASE_URL,
         "togetherai" => DEFAULT_TOGETHER_BASE_URL,
         "novelai" => DEFAULT_NOVELAI_BASE_URL,
         "openrouter" | "gemini_image" => DEFAULT_OPENROUTER_BASE_URL,
         "xai" => DEFAULT_XAI_BASE_URL,
+        "pollinations" => DEFAULT_POLLINATIONS_BASE_URL,
         "horde" => DEFAULT_HORDE_BASE_URL,
         "automatic1111" | "drawthings" => DEFAULT_AUTOMATIC1111_BASE_URL,
         "comfyui" => DEFAULT_COMFYUI_BASE_URL,

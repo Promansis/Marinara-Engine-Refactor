@@ -233,6 +233,53 @@ fn reasoning_effort(parameters: &Value) -> Option<String> {
     }
 }
 
+fn model_contains(request: &LlmRequest, needle: &str) -> bool {
+    request
+        .connection
+        .model
+        .to_ascii_lowercase()
+        .contains(needle)
+}
+
+fn is_openrouter_claude_reasoning_model(request: &LlmRequest) -> bool {
+    if request.connection.provider != "openrouter" {
+        return false;
+    }
+    let model = request.connection.model.to_ascii_lowercase();
+    model.contains("claude-3.7")
+        || model.contains("claude-3-7")
+        || model.contains("claude-opus-4")
+        || model.contains("claude-sonnet-4")
+        || model.contains("claude-haiku-4")
+}
+
+fn should_send_top_k(request: &LlmRequest) -> bool {
+    !matches!(
+        request.connection.provider.as_str(),
+        "openai" | "openrouter" | "xai" | "mistral" | "cohere" | "nanogpt"
+    )
+}
+
+fn provider_error_text(details: &Value) -> Option<String> {
+    [
+        details.pointer("/error/message").and_then(Value::as_str),
+        details.get("message").and_then(Value::as_str),
+        details.pointer("/error").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|message| !message.is_empty())
+    .map(|message| message.chars().take(500).collect())
+}
+
+fn provider_http_error(status: reqwest::StatusCode, details: Value) -> AppError {
+    let message = provider_error_text(&details)
+        .map(|detail| format!("Provider returned HTTP {status}: {detail}"))
+        .unwrap_or_else(|| format!("Provider returned HTTP {status}"));
+    AppError::with_details("llm_provider_error", message, details)
+}
+
 fn assistant_prefill(parameters: &Value) -> Option<String> {
     param_string(parameters, &["assistantPrefill", "assistant_prefill"])
 }
@@ -335,6 +382,18 @@ async fn load_openai_chatgpt_auth() -> AppResult<ChatGptAuth> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
     })
+}
+
+pub async fn check_openai_chatgpt_auth() -> AppResult<String> {
+    let auth = load_openai_chatgpt_auth().await?;
+    let account = auth
+        .account_id
+        .as_deref()
+        .map(|value| format!(" for account {value}"))
+        .unwrap_or_default();
+    Ok(format!(
+        "ChatGPT login found via Codex auth{account}. Requests will use the local ChatGPT session."
+    ))
 }
 
 fn openai_chatgpt_auth_is_stale(auth_json: &Value) -> bool {
@@ -483,11 +542,7 @@ async fn stream_openai_compatible(
     let status = response.status();
     if !status.is_success() {
         let error_body = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
-        return Err(AppError::with_details(
-            "llm_provider_error",
-            format!("Provider returned HTTP {status}"),
-            error_body,
-        ));
+        return Err(provider_http_error(status, error_body));
     }
 
     let mut stream = response.bytes_stream();
@@ -610,11 +665,7 @@ async fn complete_openai_responses_rich(request: LlmRequest) -> AppResult<LlmCom
         .await
         .map_err(|error| AppError::new("llm_response_error", error.to_string()))?;
     if !status.is_success() {
-        return Err(AppError::with_details(
-            "llm_provider_error",
-            format!("Provider returned HTTP {status}"),
-            json,
-        ));
+        return Err(provider_http_error(status, json));
     }
     let mut content = String::new();
     if let Some(text) = json.get("output_text").and_then(Value::as_str) {
@@ -673,11 +724,7 @@ async fn stream_openai_responses(
     let status = response.status();
     if !status.is_success() {
         let error_body = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
-        return Err(AppError::with_details(
-            "llm_provider_error",
-            format!("Provider returned HTTP {status}"),
-            error_body,
-        ));
+        return Err(provider_http_error(status, error_body));
     }
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
@@ -823,8 +870,10 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
     if let Some(top_p) = param_f64(parameters, &["topP", "top_p"]) {
         body["top_p"] = json!(top_p);
     }
-    if let Some(top_k) = param_i64(parameters, &["topK", "top_k"]).filter(|value| *value > 0) {
-        body["top_k"] = json!(top_k);
+    if should_send_top_k(request) {
+        if let Some(top_k) = param_i64(parameters, &["topK", "top_k"]).filter(|value| *value > 0) {
+            body["top_k"] = json!(top_k);
+        }
     }
     if let Some(frequency_penalty) = param_f64(parameters, &["frequencyPenalty", "frequency_penalty"]) {
         body["frequency_penalty"] = json!(frequency_penalty);
@@ -842,8 +891,10 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         body["response_format"] = json!({ "type": format });
     }
     if request.connection.provider == "openrouter" {
-        if let Some(effort) = reasoning_effort(parameters) {
-            body["reasoning"] = json!({ "effort": effort });
+        if is_openrouter_claude_reasoning_model(request) {
+            if let Some(effort) = reasoning_effort(parameters) {
+                body["reasoning"] = json!({ "effort": effort });
+            }
         }
         if let Some(openrouter_provider) = request
             .connection
@@ -854,7 +905,7 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         {
             body["provider"] = json!({ "order": [openrouter_provider] });
         }
-        if request.connection.enable_caching {
+        if request.connection.enable_caching && model_contains(request, "claude") {
             body["cache_control"] = json!({ "type": "ephemeral" });
         }
     }
@@ -905,6 +956,37 @@ fn claude_subscription_command() -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "claude".to_string())
+}
+
+pub fn check_claude_subscription_available() -> AppResult<String> {
+    let command_name = claude_subscription_command();
+    let mut command = Command::new(&command_name);
+    command.arg("--version").stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let output = command.output().map_err(|error| {
+        AppError::new(
+            "claude_subscription_unavailable",
+            format!(
+                "Failed to start Claude Code. Install @anthropic-ai/claude-code, run `claude login`, or set CLAUDE_CODE_COMMAND. Underlying error: {error}"
+            ),
+        )
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::new(
+            "claude_subscription_unavailable",
+            if stderr.trim().is_empty() {
+                "Claude Code is installed but did not respond to --version.".to_string()
+            } else {
+                stderr.trim().to_string()
+            },
+        ));
+    }
+    Ok("Claude Code command is available. The first chat will fail if `claude login` has not been run on this host.".to_string())
 }
 
 fn claude_subscription_text_from_json(value: &Value) -> Option<String> {
@@ -1038,7 +1120,7 @@ async fn complete_claude_subscription(request: LlmRequest) -> AppResult<String> 
 
 async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
     let base = base_url(&request.connection.provider, &request.connection.base_url);
-    let url = format!("{base}/v1/messages");
+    let url = anthropic_endpoint(&base, "messages");
     ensure_url_allowed(&url)?;
     let mut system = Vec::new();
     let mut anthropic_messages = Vec::new();
@@ -1108,13 +1190,43 @@ async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
     .await
 }
 
+fn anthropic_endpoint(base: &str, path: &str) -> String {
+    let base = base.trim_end_matches('/');
+    if base.ends_with("/v1") {
+        format!("{base}/{path}")
+    } else {
+        format!("{base}/v1/{path}")
+    }
+}
+
+fn google_vertex_endpoint(base: &str, model: &str, endpoint: &str) -> String {
+    let base = base
+        .trim_end_matches('/')
+        .trim_end_matches("/publishers/google/models")
+        .to_string();
+    format!("{base}/publishers/google/models/{model}:{endpoint}")
+}
+
 async fn complete_google(request: LlmRequest) -> AppResult<String> {
     let base = base_url(&request.connection.provider, &request.connection.base_url);
-    let url = format!(
-        "{base}/v1beta/models/{}:generateContent?key={}",
-        request.connection.model,
-        request.connection.api_key.trim()
-    );
+    let base = if request.connection.provider == "google"
+        && (base.ends_with("/v1beta") || base.ends_with("/v1"))
+    {
+        base
+    } else if request.connection.provider == "google" {
+        format!("{base}/v1beta")
+    } else {
+        base
+    };
+    let url = if request.connection.provider == "google_vertex" {
+        google_vertex_endpoint(&base, &request.connection.model, "generateContent")
+    } else {
+        format!(
+            "{base}/models/{}:generateContent?key={}",
+            request.connection.model,
+            request.connection.api_key.trim()
+        )
+    };
     ensure_url_allowed(&url)?;
     let contents: Vec<Value> = request_messages(&request)
         .into_iter()
@@ -1178,11 +1290,7 @@ where
         .await
         .map_err(|error| AppError::new("llm_response_error", error.to_string()))?;
     if !status.is_success() {
-        return Err(AppError::with_details(
-            "llm_provider_error",
-            format!("Provider returned HTTP {status}"),
-            json,
-        ));
+        return Err(provider_http_error(status, json));
     }
     extract(&json).ok_or_else(|| {
         AppError::with_details(
@@ -1247,11 +1355,7 @@ async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmC
         .await
         .map_err(|error| AppError::new("llm_response_error", error.to_string()))?;
     if !status.is_success() {
-        return Err(AppError::with_details(
-            "llm_provider_error",
-            format!("Provider returned HTTP {status}"),
-            json,
-        ));
+        return Err(provider_http_error(status, json));
     }
     let choice = json
         .get("choices")

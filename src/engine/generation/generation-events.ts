@@ -2,6 +2,7 @@ export type GenerationEvent =
   | { type: "phase"; data: string }
   | { type: "thinking"; data: string }
   | { type: "token"; data: string }
+  | { type: "user_message"; data: unknown }
   | { type: "assistant_message"; data: unknown }
   | { type: "agent_result"; data: unknown }
   | { type: "cross_post"; data: unknown }

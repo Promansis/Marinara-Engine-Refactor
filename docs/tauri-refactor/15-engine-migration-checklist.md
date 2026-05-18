@@ -194,7 +194,8 @@ Last updated: 2026-05-18.
 - [x] Restored connected command effects for `schedule_update`, `selfie`, and `scene`, including storage updates, image generation attachments, scene chat creation, and frontend generation events.
 - [x] Restored local-auth provider source parity: `openai_chatgpt` now routes through the local Codex auth/Responses path and `claude_subscription` invokes local Claude Code directly from the Tauri backend instead of relying on the old Node SDK/server transport.
 - [x] Restored Responses API, reasoning/thinking stream events, tool-call extraction, and usage accounting for OpenAI-compatible/GPT-5 style provider flows.
-- [x] Fixed native LLM connection tests to use the saved connection generation controls instead of hardcoded tiny token budgets, and restored OpenRouter request fields for reasoning, provider routing, prompt caching, assistant prefill, max-token caps, and array/refusal/tool-call response parsing.
+- [x] Split native connection testing from message testing: `Test Connection` now performs provider auth/connectivity checks without sending a generation request, while `Send Test Message` sends `hi` through the selected model using the saved UI generation controls. OpenRouter validation uses its key-info endpoint, and native request shaping preserves reasoning, provider routing, prompt caching, assistant prefill, max-token caps, and array/refusal/tool-call response parsing.
+- [x] Restored original-style optimistic conversation user messages and tightened OpenRouter request shaping for GLM/OpenRouter parity: user messages now appear before summary/pre-generation work, persisted user-message events refresh cache immediately, and OpenRouter no longer receives GLM-incompatible `reasoning`, `top_k`, or broad prompt-cache fields.
 - [x] Restored DJ Mari playlist behavior in Rust: context/taste collection, LLM playlist planning, Spotify search matching, liked-song fill, playlist creation, track add, and playback start.
 - [x] Restored ST persona media heuristics for bulk imports by scanning `User Avatars`, `settings.json` persona names/descriptions, and persona text/JSON files.
 - [x] Restored sprite cleanup parity with optional local `backgroundremover` CLI dispatch, model-cache environment support, saved-sprite restore points, and built-in matte cleanup fallback.
@@ -255,3 +256,7 @@ Last updated: 2026-05-18.
 - [x] `pnpm build` passed on 2026-05-18 after final no-legacy runtime source sanity cleanup, with Vite large-chunk warnings only.
 - [x] `cargo check --manifest-path src-tauri/Cargo.toml` passed on 2026-05-18 after final no-legacy runtime source sanity cleanup.
 - [x] `pnpm check:docs` passed on 2026-05-18 after final no-legacy runtime source sanity checklist update.
+- [x] `pnpm typecheck` passed on 2026-05-18 after conversation optimistic-message and OpenRouter GLM request-shaping fixes.
+- [x] `pnpm build` passed on 2026-05-18 after conversation optimistic-message and OpenRouter GLM request-shaping fixes, with Vite large-chunk warnings only.
+- [x] `cargo check --manifest-path src-tauri/Cargo.toml` passed on 2026-05-18 after conversation optimistic-message and OpenRouter GLM request-shaping fixes.
+- [x] `pnpm check:docs` passed on 2026-05-18 after conversation optimistic-message and OpenRouter GLM checklist update.

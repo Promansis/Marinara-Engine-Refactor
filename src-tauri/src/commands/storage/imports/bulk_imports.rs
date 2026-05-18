@@ -239,7 +239,12 @@ fn read_st_persona_settings(data_dir: &Path) -> (HashMap<String, String>, HashMa
                     let description = value
                         .as_str()
                         .map(str::to_string)
-                        .or_else(|| value.get("description").and_then(Value::as_str).map(str::to_string))
+                        .or_else(|| {
+                            value
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
                         .unwrap_or_default();
                     (!description.trim().is_empty()).then(|| (key.to_string(), description))
                 })
@@ -411,7 +416,11 @@ pub(super) fn scan_st_folder(body: Value) -> AppResult<Value> {
             break;
         }
     }
-    persona_files.extend(list_files(&data_dir.join("personas"), &[".json", ".txt"], false));
+    persona_files.extend(list_files(
+        &data_dir.join("personas"),
+        &[".json", ".txt"],
+        false,
+    ));
     persona_files.sort();
     persona_files.dedup();
     let personas: Vec<Value> = persona_files
@@ -420,7 +429,12 @@ pub(super) fn scan_st_folder(body: Value) -> AppResult<Value> {
             let is_media = path
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp"))
+                .map(|ext| {
+                    matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "png" | "jpg" | "jpeg" | "webp"
+                    )
+                })
                 .unwrap_or(false);
             if is_media {
                 st_persona_scan_item(&data_dir, &path, &persona_names, &persona_descriptions)
@@ -629,7 +643,10 @@ fn import_persona_avatar_file(
 ) -> AppResult<Value> {
     let bytes = fs::read(path)?;
     let mime = image_mime_from_path(path);
-    let avatar = format!("data:{mime};base64,{}", general_purpose::STANDARD.encode(bytes));
+    let avatar = format!(
+        "data:{mime};base64,{}",
+        general_purpose::STANDARD.encode(bytes)
+    );
     let modified = modified_at(path);
     let payload = json!({
         "name": name,
@@ -761,7 +778,12 @@ fn run_st_bulk_import_inner(
         let is_media = path
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp"))
+            .map(|ext| {
+                matches!(
+                    ext.to_ascii_lowercase().as_str(),
+                    "png" | "jpg" | "jpeg" | "webp"
+                )
+            })
             .unwrap_or(false);
         let result = if is_media {
             let filename = path

@@ -910,9 +910,11 @@ fn cleanup_image_bytes(
     requested_engine: &str,
 ) -> AppResult<SpriteCleanupOutput> {
     if requested_engine != "builtin" {
-        if let Some(bytes) =
-            try_remove_background_with_backgroundremover(state, bytes, requested_engine == "backgroundremover")?
-        {
+        if let Some(bytes) = try_remove_background_with_backgroundremover(
+            state,
+            bytes,
+            requested_engine == "backgroundremover",
+        )? {
             return Ok(SpriteCleanupOutput {
                 bytes,
                 engine: "backgroundremover".to_string(),
@@ -1537,7 +1539,12 @@ fn cleanup_engine(body: &Value) -> String {
 fn env_bool(name: &str) -> bool {
     env::var(name)
         .ok()
-        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -1637,7 +1644,10 @@ fn resolve_backgroundremover_command(state: &AppState) -> Option<BackgroundRemov
     let local_python = local_venv_executable(state, "python");
     if executable_exists(&local_python) {
         return Some(BackgroundRemoverCommand {
-            label: format!("{} -m backgroundremover.cmd.cli", local_python.to_string_lossy()),
+            label: format!(
+                "{} -m backgroundremover.cmd.cli",
+                local_python.to_string_lossy()
+            ),
             command: local_python,
             args_prefix: vec!["-m".to_string(), "backgroundremover.cmd.cli".to_string()],
             source: "local",

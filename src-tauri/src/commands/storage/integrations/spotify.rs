@@ -542,17 +542,23 @@ async fn dj_mari_playlist(state: &AppState, body: Value) -> AppResult<Value> {
             }),
         ));
     }
-    let playlist = create_dj_mari_spotify_playlist(&credentials, &playlist_name, &matched_tracks)
-        .await?;
+    let playlist =
+        create_dj_mari_spotify_playlist(&credentials, &playlist_name, &matched_tracks).await?;
     let playback = start_dj_mari_playlist_playback(
         &credentials,
-        playlist.get("playlistUri").and_then(Value::as_str).unwrap_or(""),
+        playlist
+            .get("playlistUri")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
         body.get("deviceId").and_then(Value::as_str),
     )
     .await;
     let (playback_started, playback_error) = match playback {
         Ok(value) => (
-            value.get("started").and_then(Value::as_bool).unwrap_or(false),
+            value
+                .get("started")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             value.get("error").cloned().unwrap_or(Value::Null),
         ),
         Err(error) => (false, Value::String(error.message)),
@@ -619,7 +625,9 @@ fn track_from_spotify_value(item: &Value) -> Option<SpotifyTrack> {
     })
 }
 
-async fn fetch_liked_song_examples(credentials: &SpotifyCredentials) -> AppResult<Vec<SpotifyTrack>> {
+async fn fetch_liked_song_examples(
+    credentials: &SpotifyCredentials,
+) -> AppResult<Vec<SpotifyTrack>> {
     let response = spotify_api(
         credentials,
         &format!("/me/tracks?limit={LIKED_SONG_EXAMPLE_LIMIT}"),
@@ -661,7 +669,10 @@ fn short_text(value: &str, max_chars: usize) -> String {
         return trimmed;
     }
     let end = max_chars.saturating_sub(16);
-    format!("{} [truncated]", trimmed.chars().take(end).collect::<String>().trim_end())
+    format!(
+        "{} [truncated]",
+        trimmed.chars().take(end).collect::<String>().trim_end()
+    )
 }
 
 fn record_string(record: &Value, key: &str) -> String {
@@ -748,7 +759,12 @@ fn most_recent_persona(chats: &[Value], personas: &[Value]) -> Option<Value> {
     }
     personas
         .iter()
-        .find(|persona| persona.get("isActive").and_then(Value::as_bool).unwrap_or(false))
+        .find(|persona| {
+            persona
+                .get("isActive")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
         .cloned()
         .or_else(|| personas.first().cloned())
 }
@@ -1016,7 +1032,11 @@ fn parse_generated_tracks(raw: &str) -> AppResult<Vec<GeneratedTrack>> {
         if title.is_empty() || artist.is_empty() {
             continue;
         }
-        let key = format!("{}:{}", normalize_spotify_text(&title), normalize_spotify_text(&artist));
+        let key = format!(
+            "{}:{}",
+            normalize_spotify_text(&title),
+            normalize_spotify_text(&artist)
+        );
         if !seen.insert(key) {
             continue;
         }
@@ -1093,8 +1113,7 @@ fn spotify_match_quality(track: &SpotifyTrack, desired: &GeneratedTrack) -> (f64
 fn is_strong_spotify_match(track: &SpotifyTrack, desired: &GeneratedTrack) -> bool {
     let (score, title_similarity, artist_similarity) = spotify_match_quality(track, desired);
     title_similarity >= SPOTIFY_MIN_TITLE_SIMILARITY
-        && (artist_similarity >= SPOTIFY_MIN_ARTIST_SIMILARITY
-            || score >= SPOTIFY_MIN_MATCH_SCORE)
+        && (artist_similarity >= SPOTIFY_MIN_ARTIST_SIMILARITY || score >= SPOTIFY_MIN_MATCH_SCORE)
 }
 
 fn normalize_spotify_search_query(value: &str) -> String {
@@ -1111,8 +1130,18 @@ async fn search_spotify_track(
     credentials: &SpotifyCredentials,
     desired: &GeneratedTrack,
 ) -> AppResult<Option<SpotifyTrack>> {
-    let compact_title = desired.title.replace('"', "").split_whitespace().collect::<Vec<_>>().join(" ");
-    let compact_artist = desired.artist.replace('"', "").split_whitespace().collect::<Vec<_>>().join(" ");
+    let compact_title = desired
+        .title
+        .replace('"', "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let compact_artist = desired
+        .artist
+        .replace('"', "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let queries = [
         format!("track:\"{compact_title}\" artist:\"{compact_artist}\""),
         format!("\"{compact_title}\" \"{compact_artist}\""),
@@ -1187,7 +1216,9 @@ async fn match_generated_tracks(
                 track: liked.clone(),
                 requested_title: liked.name.clone(),
                 requested_artist: liked.artist.clone(),
-                reason: Some("Fallback from the user's Liked Songs to keep the playlist full.".to_string()),
+                reason: Some(
+                    "Fallback from the user's Liked Songs to keep the playlist full.".to_string(),
+                ),
             });
         }
     }
@@ -1294,7 +1325,11 @@ fn spotify_error_message(body: &str, fallback: &str) -> String {
     if let Ok(json) = serde_json::from_str::<Value>(body) {
         if let Some(message) = json
             .get("error")
-            .and_then(|error| error.get("message").or_else(|| error.as_str().map(|_| error)))
+            .and_then(|error| {
+                error
+                    .get("message")
+                    .or_else(|| error.as_str().map(|_| error))
+            })
             .and_then(Value::as_str)
             .or_else(|| json.get("message").and_then(Value::as_str))
         {

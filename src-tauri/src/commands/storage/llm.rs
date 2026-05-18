@@ -181,12 +181,18 @@ pub(crate) fn llm_connection_from_value(value: &Value) -> AppResult<marinara_llm
         Some(Value::String(value)) => value.eq_ignore_ascii_case("true"),
         _ => false,
     };
-    let caching_at_depth = value
-        .get("cachingAtDepth")
-        .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse::<u64>().ok()));
+    let caching_at_depth = value.get("cachingAtDepth").and_then(|value| {
+        value
+            .as_u64()
+            .or_else(|| value.as_str()?.parse::<u64>().ok())
+    });
     let max_tokens_override = value
         .get("maxTokensOverride")
-        .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse::<u64>().ok()))
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str()?.parse::<u64>().ok())
+        })
         .filter(|value| *value > 0);
     Ok(marinara_llm::LlmConnection {
         provider,
@@ -203,6 +209,297 @@ pub(crate) fn llm_connection_from_value(value: &Value) -> AppResult<marinara_llm
 pub(crate) async fn connection_models(state: &AppState, id: &str) -> AppResult<Value> {
     let models = llm_models(state, Some(id)).await?;
     Ok(json!({ "models": models }))
+}
+
+pub(crate) async fn connection_auth_check(state: &AppState, id: &str) -> AppResult<Value> {
+    let started = std::time::Instant::now();
+    let connection = get_required(state, "connections", id)?;
+    let model_name = connection
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    match check_connection_without_generation(&connection).await {
+        Ok(message) => Ok(json!({
+            "success": true,
+            "message": message,
+            "latencyMs": started.elapsed().as_millis(),
+            "modelName": model_name,
+        })),
+        Err(error) => {
+            let mut response = json!({
+                "success": false,
+                "message": error.message,
+                "latencyMs": started.elapsed().as_millis(),
+                "modelName": Value::Null,
+                "code": error.code,
+            });
+            if let Some(details) = error.details {
+                response["details"] = details;
+            }
+            Ok(response)
+        }
+    }
+}
+
+async fn check_connection_without_generation(connection: &Value) -> AppResult<String> {
+    let provider = connection
+        .get("provider")
+        .and_then(Value::as_str)
+        .unwrap_or("openai");
+    match provider {
+        "openai_chatgpt" => marinara_llm::check_openai_chatgpt_auth().await,
+        "claude_subscription" => marinara_llm::check_claude_subscription_available(),
+        "openrouter" => check_openrouter_key(connection).await,
+        "image_generation" => check_image_generation_connection(connection).await,
+        _ => {
+            let models = fetch_provider_models(connection).await?;
+            if models.is_empty() {
+                Ok("Connection successful.".to_string())
+            } else {
+                Ok(format!(
+                    "Connection successful. {} model{} available.",
+                    models.len(),
+                    if models.len() == 1 { "" } else { "s" }
+                ))
+            }
+        }
+    }
+}
+
+async fn check_openrouter_key(connection: &Value) -> AppResult<String> {
+    let api_key = connection_api_key(connection)?;
+    let base = connection_base_url(connection);
+    let url = format!("{}/key", base.trim_end_matches('/'));
+    ensure_model_url_allowed(&url)?;
+    let client = connection_test_client()?;
+    let request = client
+        .get(&url)
+        .header("accept", "application/json")
+        .bearer_auth(api_key)
+        .header("HTTP-Referer", "https://marinara.local")
+        .header("X-Title", "Marinara Engine");
+    let json = send_connection_test_request(request, "OpenRouter").await?;
+    let remaining = json
+        .pointer("/data/limit_remaining")
+        .and_then(Value::as_f64)
+        .map(|value| format!(" Limit remaining: {value}."))
+        .unwrap_or_default();
+    Ok(format!("OpenRouter API key is valid.{remaining}"))
+}
+
+async fn check_image_generation_connection(connection: &Value) -> AppResult<String> {
+    let source = super::images::image_generation_source(connection);
+    let base = super::images::image_connection_base_url(connection, &source);
+    let source = if source.trim().is_empty() {
+        "openai"
+    } else {
+        source.as_str()
+    };
+    match source {
+        "runpod_comfyui" => Ok(
+            "RunPod endpoint is configured. Use Test Image to verify generation because RunPod has no lightweight validation endpoint."
+                .to_string(),
+        ),
+        "openrouter" | "gemini_image" => check_openrouter_key_for_base(connection, &base).await,
+        "novelai" => {
+            check_bearer_get("https://api.novelai.net/user/subscription", connection, "NovelAI")
+                .await?;
+            Ok("NovelAI API key is valid.".to_string())
+        }
+        "horde" => {
+            let url = build_horde_url(&base, "status/heartbeat");
+            ensure_model_url_allowed(&url)?;
+            let api_key = connection_api_key_optional(connection);
+            let request = connection_test_client()?
+                .get(&url)
+                .header("accept", "application/json")
+                .header(
+                    "apikey",
+                    if api_key.trim().is_empty() {
+                        "0000000000"
+                    } else {
+                        api_key.trim()
+                    },
+                )
+                .header("Client-Agent", "Marinara-Engine");
+            send_connection_test_request(request, "Stable Horde").await?;
+            Ok("Stable Horde endpoint is reachable.".to_string())
+        }
+        "stability" => {
+            let url = stability_url(&base, "v1/user/account");
+            check_bearer_get(&url, connection, "Stability").await?;
+            Ok("Stability API key is valid.".to_string())
+        }
+        "comfyui" => {
+            let url = format!("{base}/system_stats");
+            check_optional_bearer_get(&url, connection, "ComfyUI").await?;
+            Ok("ComfyUI endpoint is reachable.".to_string())
+        }
+        "automatic1111" | "drawthings" => {
+            let url = format!("{base}/sdapi/v1/options");
+            check_optional_bearer_get(&url, connection, "Stable Diffusion Web UI").await?;
+            Ok("Stable Diffusion Web UI endpoint is reachable.".to_string())
+        }
+        "pollinations" => {
+            let url = format!("{base}/models");
+            check_optional_bearer_get(&url, connection, "Pollinations").await?;
+            Ok("Pollinations endpoint is reachable.".to_string())
+        }
+        _ => {
+            let url = format!("{base}/models");
+            check_bearer_get(&url, connection, "Image provider").await?;
+            Ok("Image provider API key is valid.".to_string())
+        }
+    }
+}
+
+async fn check_openrouter_key_for_base(connection: &Value, base: &str) -> AppResult<String> {
+    let api_key = connection_api_key(connection)?;
+    let url = format!("{}/key", base.trim_end_matches('/'));
+    ensure_model_url_allowed(&url)?;
+    let request = connection_test_client()?
+        .get(&url)
+        .header("accept", "application/json")
+        .bearer_auth(api_key)
+        .header("HTTP-Referer", "https://marinara.local")
+        .header("X-Title", "Marinara Engine");
+    send_connection_test_request(request, "OpenRouter").await?;
+    Ok("OpenRouter API key is valid.".to_string())
+}
+
+async fn check_bearer_get(url: &str, connection: &Value, label: &str) -> AppResult<Value> {
+    let api_key = connection_api_key(connection)?;
+    ensure_model_url_allowed(url)?;
+    let request = connection_test_client()?
+        .get(url)
+        .header("accept", "application/json")
+        .bearer_auth(api_key);
+    send_connection_test_request(request, label).await
+}
+
+async fn check_optional_bearer_get(url: &str, connection: &Value, label: &str) -> AppResult<Value> {
+    ensure_model_url_allowed(url)?;
+    let mut request = connection_test_client()?
+        .get(url)
+        .header("accept", "application/json");
+    let api_key = connection_api_key_optional(connection);
+    if !api_key.trim().is_empty() {
+        request = request.bearer_auth(api_key.trim().to_string());
+    }
+    send_connection_test_request(request, label).await
+}
+
+async fn send_connection_test_request(
+    request: reqwest::RequestBuilder,
+    label: &str,
+) -> AppResult<Value> {
+    let response = request
+        .send()
+        .await
+        .map_err(|error| AppError::new("connection_network_error", error.to_string()))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| AppError::new("connection_response_error", error.to_string()))?;
+    if !status.is_success() {
+        return Err(AppError::new(
+            "connection_provider_error",
+            format!(
+                "{label} returned HTTP {status}: {}",
+                sanitize_provider_body(&text)
+            ),
+        ));
+    }
+    Ok(serde_json::from_str::<Value>(&text).unwrap_or(Value::Null))
+}
+
+fn connection_test_client() -> AppResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| AppError::new("connection_client_error", error.to_string()))
+}
+
+fn connection_api_key(connection: &Value) -> AppResult<String> {
+    let api_key = connection_api_key_optional(connection);
+    if api_key.trim().is_empty() {
+        Err(AppError::invalid_input(
+            "API key is required for this provider.",
+        ))
+    } else {
+        Ok(api_key)
+    }
+}
+
+fn connection_api_key_optional(connection: &Value) -> String {
+    connection
+        .get("apiKey")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn stability_url(base: &str, target_path: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if let Ok(mut parsed) = reqwest::Url::parse(trimmed) {
+        let parts = parsed
+            .path()
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let version_index = parts
+            .iter()
+            .position(|part| *part == "v1" || *part == "v2beta");
+        let prefix = version_index
+            .map(|index| parts[..index].to_vec())
+            .unwrap_or(parts);
+        let path = prefix
+            .into_iter()
+            .chain(target_path.split('/').filter(|part| !part.is_empty()))
+            .collect::<Vec<_>>()
+            .join("/");
+        parsed.set_path(&format!("/{path}"));
+        parsed.set_query(None);
+        parsed.set_fragment(None);
+        return parsed.to_string().trim_end_matches('/').to_string();
+    }
+    format!("{}/{}", trimmed, target_path.trim_start_matches('/'))
+}
+
+fn build_horde_url(base: &str, target_path: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if let Ok(mut parsed) = reqwest::Url::parse(trimmed) {
+        let parts = parsed
+            .path()
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let version_index = parts
+            .windows(2)
+            .position(|window| window[0] == "api" && window[1] == "v2");
+        let mut prefix = version_index
+            .map(|index| parts[..index + 2].to_vec())
+            .unwrap_or(parts);
+        if prefix.is_empty()
+            || !prefix
+                .windows(2)
+                .any(|window| window[0] == "api" && window[1] == "v2")
+        {
+            prefix.extend(["api", "v2"]);
+        }
+        let path = prefix
+            .into_iter()
+            .chain(target_path.split('/').filter(|part| !part.is_empty()))
+            .collect::<Vec<_>>()
+            .join("/");
+        parsed.set_path(&format!("/{path}"));
+        parsed.set_query(None);
+        parsed.set_fragment(None);
+        return parsed.to_string().trim_end_matches('/').to_string();
+    }
+    format!("{}/api/v2/{}", trimmed, target_path.trim_start_matches('/'))
 }
 
 fn provider_model_catalog(provider: &str) -> Vec<Value> {
@@ -349,8 +646,8 @@ async fn fetch_ollama_models(connection: &Value) -> AppResult<Vec<Value>> {
 }
 
 async fn fetch_image_models(connection: &Value) -> AppResult<Vec<Value>> {
-    let source = image_source(connection);
-    let base = connection_base_url(connection);
+    let source = super::images::image_generation_source(connection);
+    let base = super::images::image_connection_base_url(connection, &source);
     if source == "stability" {
         return Ok(vec![
             json!({ "id": "stable-image-core", "name": "Stable Image Core", "provider": "image_generation" }),
@@ -594,6 +891,7 @@ fn model_id(model: &Value) -> Option<&str> {
 fn model_endpoint(provider: &str, base: &str, connection: &Value) -> String {
     let base = base.trim_end_matches('/');
     match provider {
+        "anthropic" if base.ends_with("/v1") => format!("{base}/models"),
         "anthropic" => format!("{base}/v1/models"),
         "google" if base.ends_with("/v1beta") || base.ends_with("/v1") => {
             format!(
@@ -643,17 +941,6 @@ fn provider_default_base_url(provider: &str) -> &'static str {
         "togetherai" => "https://api.together.xyz/v1",
         _ => "https://api.openai.com/v1",
     }
-}
-
-fn image_source(connection: &Value) -> String {
-    connection
-        .get("imageGenerationSource")
-        .or_else(|| connection.get("imageService"))
-        .or_else(|| connection.get("model"))
-        .and_then(Value::as_str)
-        .unwrap_or("pollinations")
-        .trim()
-        .to_ascii_lowercase()
 }
 
 fn ensure_model_url_allowed(url: &str) -> AppResult<()> {

@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { retryGenerationAgents, startGeneration } from "../../../engine/generation/start-generation";
 import { backfillConversationSummaries } from "../../../engine/modes/chat/core/summaries/auto-summary.service";
@@ -9,7 +9,7 @@ import {
   type CharacterCardFieldUpdate,
   type EditableCharacterCardField,
 } from "../../../engine/contracts/types/agent";
-import type { Chat } from "../../../engine/contracts/types/chat";
+import type { Chat, Message } from "../../../engine/contracts/types/chat";
 import { chatBackgroundMetadataToUrl } from "../../../shared/lib/backgrounds";
 import { llmApi } from "../../../shared/api/llm-api";
 import { storageApi } from "../../../shared/api/storage-api";
@@ -45,6 +45,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function sortMessagesByCreatedAt(messages: Message[]): Message[] {
+  return [...messages].sort((a, b) => {
+    const createdAtOrder = String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? ""));
+    if (createdAtOrder !== 0) return createdAtOrder;
+    return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+  });
+}
+
+function optimisticUserMessage(args: GenerateArgs): Message | null {
+  if (args.impersonate === true || readString(args.regenerateMessageId).trim()) return null;
+  const content = readString(args.userMessage).trim() || readString(args.message).trim();
+  if (!content) return null;
+  const attachments = Array.isArray(args.attachments) ? args.attachments : [];
+  const createdAt = new Date().toISOString();
+  return {
+    id: `__optimistic_${Date.now()}`,
+    chatId: args.chatId,
+    role: "user",
+    characterId: null,
+    content,
+    activeSwipeIndex: 0,
+    extra: {
+      displayText: null,
+      isGenerated: false,
+      tokenCount: null,
+      generationInfo: null,
+      ...(attachments.length ? { attachments } : {}),
+    },
+    createdAt,
+  };
+}
+
+function insertOptimisticUserMessage(queryClient: QueryClient, args: GenerateArgs) {
+  const optimistic = optimisticUserMessage(args);
+  if (!optimistic) return;
+  queryClient.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(args.chatId), (old) => {
+    if (!old?.pages?.length) return old;
+    const pages = [...old.pages];
+    pages[0] = sortMessagesByCreatedAt([...(pages[0] ?? []), optimistic]);
+    return { ...old, pages };
+  });
 }
 
 function parseMaybeRecord(value: unknown): Record<string, unknown> {
@@ -425,6 +468,7 @@ export async function runGenerationWithUi(
 
   let received = "";
   try {
+    insertOptimisticUserMessage(queryClient, args);
     await options.beforeStart?.(args);
     for await (const event of streamFactory(args, controller.signal)) {
       switch (event.type) {
@@ -447,6 +491,7 @@ export async function runGenerationWithUi(
           }
           break;
         case "message":
+        case "user_message":
         case "assistant_message":
           if (event.data && typeof event.data === "object") {
             await queryClient.invalidateQueries({ queryKey: ["chats"] });

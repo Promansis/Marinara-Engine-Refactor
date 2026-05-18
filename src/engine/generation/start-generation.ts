@@ -98,8 +98,8 @@ async function saveUserMessage(
   storage: StorageGateway,
   input: StartGenerationInput,
   prepared: PreparedUserInput,
-): Promise<void> {
-  if (!prepared.content.trim() || input.impersonate === true || readString(input.regenerateMessageId).trim()) return;
+): Promise<unknown | null> {
+  if (!prepared.content.trim() || input.impersonate === true || readString(input.regenerateMessageId).trim()) return null;
   const extra: Record<string, unknown> = {};
   if (prepared.attachments.length) extra.attachments = prepared.attachments;
   if (prepared.mentionedCharacterNames.length) extra.mentionedCharacterNames = prepared.mentionedCharacterNames;
@@ -114,7 +114,7 @@ async function saveUserMessage(
     impersonatePromptTemplate: input.impersonatePromptTemplate,
   });
   if (generationReplay) extra.generationReplay = generationReplay;
-  await storage.createChatMessage(input.chatId, {
+  return storage.createChatMessage(input.chatId, {
     role: "user",
     content: prepared.content,
     extra,
@@ -334,7 +334,8 @@ export async function* startGeneration(
 
   yield { type: "phase", data: "Saving message..." };
   const preparedUserInput = await prepareUserInput(deps.storage, input);
-  await saveUserMessage(deps.storage, input, preparedUserInput);
+  const savedUserMessage = await saveUserMessage(deps.storage, input, preparedUserInput);
+  if (savedUserMessage) yield { type: "user_message", data: savedUserMessage };
   const chat = requireRecord(await deps.storage.get("chats", chatId), "Chat");
   const connection = await resolveGenerationConnection(deps.storage, chat, input);
   const storedMessages = await loadChatMessages(deps.storage, chatId);
