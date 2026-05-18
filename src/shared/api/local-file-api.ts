@@ -3,6 +3,8 @@ import { api } from "./api-client";
 
 export const USER_BACKGROUND_URL_PREFIX = "marinara-background:";
 export const GAME_ASSET_URL_PREFIX = "marinara-game-asset:";
+export const LOREBOOK_IMAGE_URL_PREFIX = "marinara-lorebook-image:";
+const LEGACY_LOREBOOK_IMAGE_URL_PREFIX = "/api/lorebooks/images/file/";
 
 type PathResponse = { path?: string | null };
 
@@ -39,8 +41,18 @@ export function gameAssetUrl(path: string): string {
   return `${GAME_ASSET_URL_PREFIX}${encodeLocalAssetPath(path)}`;
 }
 
+export function lorebookImageUrl(filename: string): string {
+  return `${LOREBOOK_IMAGE_URL_PREFIX}${encodeLocalAssetPath(filename)}`;
+}
+
 export function isManagedLocalAssetUrl(url: string | null | undefined): boolean {
-  return !!url && (url.startsWith(USER_BACKGROUND_URL_PREFIX) || url.startsWith(GAME_ASSET_URL_PREFIX));
+  return (
+    !!url &&
+    (url.startsWith(USER_BACKGROUND_URL_PREFIX) ||
+      url.startsWith(GAME_ASSET_URL_PREFIX) ||
+      url.startsWith(LOREBOOK_IMAGE_URL_PREFIX) ||
+      url.startsWith(LEGACY_LOREBOOK_IMAGE_URL_PREFIX))
+  );
 }
 
 export function filePathToAssetUrl(path: string | null | undefined): string {
@@ -73,6 +85,11 @@ export async function resolveBackgroundFileUrl(filename: string): Promise<string
   return filePathToAssetUrl(response.path ?? "");
 }
 
+export async function resolveLorebookImageFileUrl(filename: string): Promise<string> {
+  const response = await api.get<PathResponse>(`/lorebooks/images/file-path/${encodeLocalAssetPath(filename)}`);
+  return filePathToAssetUrl(response.path ?? "");
+}
+
 export async function resolveManagedLocalAssetUrl(url: string | null | undefined): Promise<string | null> {
   if (!url) return null;
   if (url.startsWith(USER_BACKGROUND_URL_PREFIX)) {
@@ -80,6 +97,12 @@ export async function resolveManagedLocalAssetUrl(url: string | null | undefined
   }
   if (url.startsWith(GAME_ASSET_URL_PREFIX)) {
     return resolveGameAssetFileUrl(decodeLocalAssetPath(url.slice(GAME_ASSET_URL_PREFIX.length)));
+  }
+  if (url.startsWith(LOREBOOK_IMAGE_URL_PREFIX)) {
+    return resolveLorebookImageFileUrl(decodeLocalAssetPath(url.slice(LOREBOOK_IMAGE_URL_PREFIX.length)));
+  }
+  if (url.startsWith(LEGACY_LOREBOOK_IMAGE_URL_PREFIX)) {
+    return resolveLorebookImageFileUrl(decodeLocalAssetPath(url.slice(LEGACY_LOREBOOK_IMAGE_URL_PREFIX.length)));
   }
   return filePathToAssetUrl(url);
 }

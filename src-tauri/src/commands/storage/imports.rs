@@ -816,6 +816,212 @@ fn import_marinara_package(state: &AppState, body: Value) -> AppResult<Value> {
     import_marinara_envelope(state, envelope)
 }
 
+fn data_string_name(record: &Value) -> Option<String> {
+    record
+        .get("data")
+        .and_then(Value::as_str)
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(|data| data.get("name").and_then(Value::as_str).map(ToOwned::to_owned))
+}
+
+fn import_marinara_character(state: &AppState, data: Value) -> AppResult<Value> {
+    let looks_like_storage_record =
+        data.get("data").is_some() || data.get("format").is_some() || data.get("avatarPath").is_some();
+    if !looks_like_storage_record {
+        return import_st_character_payload(state, data, None, &Value::Null);
+    }
+
+    let mut record_value = with_entity_defaults("characters", data.clone());
+    if let Some(avatar) = data.get("avatar").and_then(Value::as_str) {
+        if let Some(record) = record_value.as_object_mut() {
+            record.insert("avatarPath".to_string(), Value::String(avatar.to_string()));
+            record.insert("avatar".to_string(), Value::String(avatar.to_string()));
+        }
+    }
+    apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
+    let record = state.storage.create("characters", record_value)?;
+    let name = data_string_name(&record)
+        .or_else(|| record.get("name").and_then(Value::as_str).map(ToOwned::to_owned))
+        .unwrap_or_else(|| "Imported Character".to_string());
+    Ok(json!({
+        "success": true,
+        "type": "marinara_character",
+        "id": record.get("id").cloned().unwrap_or(Value::Null),
+        "characterId": record.get("id").cloned().unwrap_or(Value::Null),
+        "name": name,
+        "character": record
+    }))
+}
+
+fn import_marinara_persona(state: &AppState, data: Value) -> AppResult<Value> {
+    let mut record_value = with_entity_defaults("personas", data.clone());
+    if let Some(avatar) = data.get("avatar").and_then(Value::as_str) {
+        if let Some(record) = record_value.as_object_mut() {
+            record.insert("avatarPath".to_string(), Value::String(avatar.to_string()));
+            record.insert("avatar".to_string(), Value::String(avatar.to_string()));
+        }
+    }
+    apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
+    let record = state.storage.create("personas", record_value)?;
+    Ok(json!({
+        "success": true,
+        "type": "marinara_persona",
+        "id": record.get("id").cloned().unwrap_or(Value::Null),
+        "name": record.get("name").cloned().unwrap_or(Value::Null)
+    }))
+}
+
+fn import_marinara_lorebook(state: &AppState, envelope: &Map<String, Value>, data: Value) -> AppResult<Value> {
+    let mut lorebook = with_entity_defaults("lorebooks", data.clone());
+    if let Some(image) = data.get("avatar").or_else(|| data.get("image")).and_then(Value::as_str) {
+        if let Some(record) = lorebook.as_object_mut() {
+            record.insert("imagePath".to_string(), Value::String(image.to_string()));
+        }
+    }
+    apply_timestamp_overrides(&mut lorebook, &Value::Null, &data);
+    let record = state.storage.create("lorebooks", lorebook)?;
+    let lorebook_id = record
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    let mut folder_id_map: HashMap<String, String> = HashMap::new();
+    for folder in envelope
+        .get("folders")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        let old_id = folder.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
+        let mut folder_record = ensure_object(folder)?;
+        folder_record.remove("id");
+        folder_record.insert("lorebookId".to_string(), Value::String(lorebook_id.clone()));
+        let created = state
+            .storage
+            .create("lorebook-folders", Value::Object(folder_record))?;
+        if let (Some(old_id), Some(new_id)) = (
+            old_id,
+            created.get("id").and_then(Value::as_str).map(ToOwned::to_owned),
+        ) {
+            folder_id_map.insert(old_id, new_id);
+        }
+    }
+
+    let exported_entries = envelope
+        .get("entries")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_else(|| lorebook_entries(&data));
+    for (index, entry) in exported_entries.iter().enumerate() {
+        let mut normalized = normalize_lorebook_entry(&lorebook_id, entry, index);
+        if let Some(old_folder_id) = entry.get("folderId").and_then(Value::as_str) {
+            if let Some(object) = normalized.as_object_mut() {
+                object.insert(
+                    "folderId".to_string(),
+                    folder_id_map
+                        .get(old_folder_id)
+                        .map(|id| Value::String(id.clone()))
+                        .unwrap_or(Value::Null),
+                );
+            }
+        }
+        state.storage.create("lorebook-entries", normalized)?;
+    }
+
+    Ok(json!({
+        "success": true,
+        "type": "marinara_lorebook",
+        "id": lorebook_id,
+        "lorebookId": lorebook_id,
+        "name": record.get("name").cloned().unwrap_or(Value::Null),
+        "entriesImported": exported_entries.len(),
+        "foldersImported": folder_id_map.len(),
+        "lorebook": record
+    }))
+}
+
+fn import_marinara_preset(state: &AppState, envelope: &Map<String, Value>, data: Value) -> AppResult<Value> {
+    let mut record_value = with_entity_defaults("prompts", data.clone());
+    apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
+    let record = state.storage.create("prompts", record_value)?;
+    let preset_id = record
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::new("storage_error", "Created preset is missing an id"))?
+        .to_string();
+
+    let mut group_id_map: HashMap<String, String> = HashMap::new();
+    for group in envelope
+        .get("groups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        let old_id = group.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
+        let mut group_record = ensure_object(group)?;
+        group_record.remove("id");
+        group_record.insert("presetId".to_string(), Value::String(preset_id.clone()));
+        let created = state
+            .storage
+            .create("prompt-groups", Value::Object(group_record))?;
+        if let (Some(old_id), Some(new_id)) = (
+            old_id,
+            created.get("id").and_then(Value::as_str).map(ToOwned::to_owned),
+        ) {
+            group_id_map.insert(old_id, new_id);
+        }
+    }
+
+    let mut sections_imported = 0usize;
+    for section in envelope
+        .get("sections")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        let mut section_record = ensure_object(section)?;
+        section_record.remove("id");
+        section_record.insert("presetId".to_string(), Value::String(preset_id.clone()));
+        if let Some(old_group_id) = section_record.get("groupId").and_then(Value::as_str) {
+            if let Some(new_group_id) = group_id_map.get(old_group_id) {
+                section_record.insert("groupId".to_string(), Value::String(new_group_id.clone()));
+            }
+        }
+        state
+            .storage
+            .create("prompt-sections", Value::Object(section_record))?;
+        sections_imported += 1;
+    }
+
+    let mut variables_imported = 0usize;
+    for variable in envelope
+        .get("variables")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        let mut variable_record = ensure_object(variable)?;
+        variable_record.remove("id");
+        variable_record.insert("presetId".to_string(), Value::String(preset_id.clone()));
+        state
+            .storage
+            .create("prompt-variables", Value::Object(variable_record))?;
+        variables_imported += 1;
+    }
+
+    Ok(json!({
+        "success": true,
+        "type": "marinara_preset",
+        "id": preset_id,
+        "name": record.get("name").cloned().unwrap_or(Value::Null),
+        "preset": record,
+        "groupsImported": group_id_map.len(),
+        "sectionsImported": sections_imported,
+        "variablesImported": variables_imported
+    }))
+}
+
 fn import_marinara_envelope(state: &AppState, envelope: Value) -> AppResult<Value> {
     let object = envelope
         .as_object()
@@ -845,30 +1051,10 @@ fn import_marinara_envelope(state: &AppState, envelope: Value) -> AppResult<Valu
         }
     }
     match import_type {
-        "marinara_character" => import_st_character_payload(state, data, None, &Value::Null),
-        "marinara_persona" => {
-            let mut record_value = with_entity_defaults("personas", data.clone());
-            apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
-            let record = state
-                .storage
-                .create("personas", record_value)?;
-            Ok(
-                json!({ "success": true, "type": import_type, "id": record.get("id").cloned().unwrap_or(Value::Null), "name": record.get("name").cloned().unwrap_or(Value::Null) }),
-            )
-        }
-        "marinara_lorebook" => {
-            create_lorebook_from_payload(state, &data, "Imported Lorebook", None)
-        }
-        "marinara_preset" => {
-            let mut record_value = with_entity_defaults("prompts", data.clone());
-            apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
-            let record = state
-                .storage
-                .create("prompts", record_value)?;
-            Ok(
-                json!({ "success": true, "type": import_type, "id": record.get("id").cloned().unwrap_or(Value::Null), "name": record.get("name").cloned().unwrap_or(Value::Null) }),
-            )
-        }
+        "marinara_character" => import_marinara_character(state, data),
+        "marinara_persona" => import_marinara_persona(state, data),
+        "marinara_lorebook" => import_marinara_lorebook(state, object, data),
+        "marinara_preset" => import_marinara_preset(state, object, data),
         _ => Err(AppError::invalid_input(format!(
             "Unknown Marinara import type: {import_type}"
         ))),

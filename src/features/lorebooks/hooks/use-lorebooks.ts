@@ -65,6 +65,19 @@ export function useUpdateLorebook() {
   });
 }
 
+export function useUploadLorebookImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, image, filename }: { id: string; image: string; filename?: string }) =>
+      api.post<Lorebook>(`/lorebooks/${id}/image`, { image, filename }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: lorebookKeys.all });
+      qc.invalidateQueries({ queryKey: lorebookKeys.list() });
+      qc.invalidateQueries({ queryKey: lorebookKeys.detail(variables.id) });
+    },
+  });
+}
+
 export function useDeleteLorebook() {
   const qc = useQueryClient();
   return useMutation({

@@ -17,16 +17,9 @@ import {
   useReorderConnectionFolders,
   useMoveConnection,
 } from "../hooks/use-connection-folders";
-import { useAgentConfigs, useCreateAgent, useUpdateAgent } from "../../agents/hooks/use-agents";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { useUIStore } from "../../../shared/stores/ui.store";
-import { useSidecarStore } from "../../../shared/stores/sidecar.store";
-import {
-  BUILT_IN_AGENTS,
-  LOCAL_SIDECAR_CONNECTION_ID,
-  getDefaultAgentPrompt,
-  type ConnectionFolder,
-} from "@marinara-engine/shared";
+import { type ConnectionFolder } from "@marinara-engine/shared";
 import { showConfirmDialog } from "../../../shared/lib/app-dialogs";
 import { Modal } from "../../../shared/components/ui/Modal";
 import {
@@ -38,10 +31,6 @@ import {
   ExternalLink,
   X,
   Copy,
-  BrainCircuit,
-  Settings2,
-  ChevronDown,
-  ChevronUp,
   ChevronRight,
   FolderPlus,
   FolderOpen,
@@ -49,7 +38,6 @@ import {
   Pencil,
 } from "lucide-react";
 import { cn } from "../../../shared/lib/utils";
-import { toast } from "sonner";
 import { TTSConfigCard } from "../../settings/components/settings/TTSConfigCard";
 
 /** Provider → gradient color pair for connection icons. */
@@ -70,239 +58,6 @@ const PROVIDER_COLORS: Record<string, { from: string; to: string; ring: string; 
   },
 };
 const DEFAULT_COLOR = { from: "from-sky-400", to: "to-blue-500", ring: "ring-sky-400/40", badge: "bg-sky-400" };
-const SHOW_DEFERRED_SIDECAR_SURFACE = false;
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-function formatRuntimeVariantLabel(variant: string | null): string | null {
-  if (!variant) return null;
-  return variant.replace(/-/g, " ");
-}
-
-function SidecarCard() {
-  const { data: agentConfigs } = useAgentConfigs();
-  const createAgent = useCreateAgent();
-  const updateAgentConnection = useUpdateAgent();
-  const {
-    status,
-    config,
-    modelDownloaded,
-    modelDisplayName,
-    modelSize,
-    startupError,
-    failedRuntimeVariant,
-    setShowDownloadModal,
-    updateConfig,
-    fetchStatus,
-  } = useSidecarStore();
-  const isDownloaded = modelDownloaded;
-  const [assigningTrackers, setAssigningTrackers] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const activeModelName = isDownloaded ? modelDisplayName : null;
-  const backendLabel = config.backend === "mlx" ? "MLX" : "GGUF";
-  const trackerAgents = useMemo(() => BUILT_IN_AGENTS.filter((agent) => agent.category === "tracker"), []);
-  const trackerLocalCount = useMemo(() => {
-    const configs = (agentConfigs ?? []) as Array<{ type: string; connectionId: string | null }>;
-    const byType = new Map(configs.map((cfg) => [cfg.type, cfg.connectionId]));
-    return trackerAgents.filter((agent) => byType.get(agent.id) === LOCAL_SIDECAR_CONNECTION_ID).length;
-  }, [agentConfigs, trackerAgents]);
-
-  // Fetch status on mount (handles HMR store resets and initial load)
-  useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
-
-  const handleAssignTrackersToLocal = async () => {
-    if (!isDownloaded || assigningTrackers) return;
-
-    setAssigningTrackers(true);
-    try {
-      const configs = (agentConfigs ?? []) as Array<{
-        id: string;
-        type: string;
-        connectionId: string | null;
-      }>;
-      const configByType = new Map(configs.map((cfg) => [cfg.type, cfg]));
-
-      await Promise.all(
-        trackerAgents.map(async (agent) => {
-          const existing = configByType.get(agent.id);
-          if (existing) {
-            if (existing.connectionId === LOCAL_SIDECAR_CONNECTION_ID) return;
-            await updateAgentConnection.mutateAsync({ id: existing.id, connectionId: LOCAL_SIDECAR_CONNECTION_ID });
-            return;
-          }
-
-          await createAgent.mutateAsync({
-            type: agent.id,
-            name: agent.name,
-            description: agent.description,
-            phase: agent.phase,
-            enabled: true,
-            connectionId: LOCAL_SIDECAR_CONNECTION_ID,
-            promptTemplate: getDefaultAgentPrompt(agent.id),
-            settings: {},
-          });
-        }),
-      );
-
-      toast.success("All built-in tracker agents now point to the local model.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update tracker agent connections.");
-    } finally {
-      setAssigningTrackers(false);
-    }
-  };
-
-  const openLocalModelSettings = () => {
-    void fetchStatus();
-    setShowDownloadModal(true);
-  };
-
-  return (
-    <div
-      className={cn(
-        "rounded-xl border border-purple-400/20 bg-gradient-to-br from-purple-500/5 to-fuchsia-500/5 p-3 transition-all",
-        expanded && "border-purple-400/30",
-      )}
-    >
-      <div className="flex items-center gap-2.5">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-purple-400 to-fuchsia-500 text-white shadow-sm">
-          <BrainCircuit size="1rem" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">Local Model</div>
-          <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
-            {isDownloaded
-              ? `${activeModelName ?? "Model"} • ${backendLabel}${modelSize ? ` • ${formatBytes(modelSize)}` : ""}${
-                  status === "starting_server"
-                    ? " • Starting"
-                    : status === "server_error"
-                      ? " • Error"
-                      : status === "ready"
-                        ? " • Ready"
-                        : ""
-                }`
-              : "Not downloaded"}
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={openLocalModelSettings}
-            className="rounded-lg p-1.5 text-purple-400 transition-all hover:bg-purple-400/15 active:scale-90"
-            title="Open local model settings"
-          >
-            <Settings2 size="0.8125rem" />
-          </button>
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
-            title={expanded ? "Collapse" : "Expand"}
-          >
-            {expanded ? <ChevronUp size="0.875rem" /> : <ChevronDown size="0.875rem" />}
-          </button>
-        </div>
-      </div>
-      {/* Local model actions (only when model is downloaded) */}
-      {expanded && (
-        <>
-          {isDownloaded && (
-            <div className="mt-2.5 flex flex-col gap-1.5 border-t border-purple-400/10 pt-2.5">
-              <button
-                type="button"
-                onClick={() => void handleAssignTrackersToLocal()}
-                disabled={assigningTrackers}
-                className="flex items-center justify-between gap-3 rounded-lg border border-purple-400/15 bg-purple-400/8 px-3 py-2 text-left transition-all hover:bg-purple-400/12 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-medium text-purple-200">Use local model for all tracker agents</div>
-                  <div className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-                    Assigns the built-in local model as the connection override for every built-in tracker agent.
-                  </div>
-                </div>
-                {assigningTrackers ? (
-                  <BrainCircuit size="0.875rem" className="animate-pulse text-purple-300" />
-                ) : (
-                  <Link size="0.875rem" className="text-purple-300" />
-                )}
-              </button>
-              <p className="px-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-                {trackerLocalCount}/{trackerAgents.length} built-in tracker agents currently point at the local model.
-                This changes which model they use when enabled; it does not enable the agents by itself.
-              </p>
-              <button
-                type="button"
-                onClick={() => updateConfig({ useForTrackers: !config.useForTrackers })}
-                className="flex items-center gap-2.5 cursor-pointer select-none text-left"
-              >
-                <div className="relative shrink-0">
-                  <div
-                    className={cn(
-                      "h-4 w-7 rounded-full transition-colors",
-                      config.useForTrackers ? "bg-purple-400/70" : "bg-[var(--border)]",
-                    )}
-                  />
-                  <div
-                    className={cn(
-                      "absolute top-0.5 left-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
-                      config.useForTrackers && "translate-x-3",
-                    )}
-                  />
-                </div>
-                <span className="text-xs text-[var(--muted-foreground)]">Use for tracker agents (roleplay)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => updateConfig({ useForGameScene: !config.useForGameScene })}
-                className="flex items-center gap-2.5 cursor-pointer select-none text-left"
-              >
-                <div className="relative shrink-0">
-                  <div
-                    className={cn(
-                      "h-4 w-7 rounded-full transition-colors",
-                      config.useForGameScene ? "bg-purple-400/70" : "bg-[var(--border)]",
-                    )}
-                  />
-                  <div
-                    className={cn(
-                      "absolute top-0.5 left-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
-                      config.useForGameScene && "translate-x-3",
-                    )}
-                  />
-                </div>
-                <span className="text-xs text-[var(--muted-foreground)]">Use for game scene analysis</span>
-              </button>
-            </div>
-          )}
-          {status === "server_error" && (
-            <div className="mt-2.5 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5">
-              <div className="text-[0.6875rem] font-medium text-amber-200">Local runtime unavailable</div>
-              <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]/75">
-                {startupError ?? "Marinara will keep running without the local model until you retry."}
-              </div>
-              {failedRuntimeVariant && (
-                <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]/60">
-                  Runtime: {formatRuntimeVariantLabel(failedRuntimeVariant)}
-                </div>
-              )}
-              <button
-                onClick={() => {
-                  openLocalModelSettings();
-                }}
-                className="mt-2 rounded-lg bg-amber-500/15 px-2.5 py-1 text-[0.6875rem] font-medium text-amber-200 transition-colors hover:bg-amber-500/25"
-              >
-                Open Local AI Model
-              </button>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
 
 type ConnectionRowData = {
   id: string;
@@ -666,8 +421,6 @@ export function ConnectionsPanel() {
 
   return (
     <div className="flex flex-col gap-2 p-3">
-      {SHOW_DEFERRED_SIDECAR_SURFACE && import.meta.env.VITE_MARINARA_LITE !== "true" && <SidecarCard />}
-
       {/* ── Text to Speech ── */}
       <TTSConfigCard />
 

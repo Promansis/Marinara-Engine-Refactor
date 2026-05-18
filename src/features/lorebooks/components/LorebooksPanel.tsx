@@ -2,7 +2,7 @@
 // Panel: Lorebooks (overhauled)
 // Category tabs, search, click-to-edit, AI generate
 // ──────────────────────────────────────────────
-import { useState, useMemo, useCallback } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import {
   Plus,
@@ -23,10 +23,11 @@ import {
   Wand2,
   Trash2,
   Zap,
+  Camera,
 } from "lucide-react";
 import { useUIStore } from "../../../shared/stores/ui.store";
 import { useChatStore } from "../../../shared/stores/chat.store";
-import { useLorebooks, useDeleteLorebook, useUpdateLorebook } from "../hooks/use-lorebooks";
+import { useLorebooks, useDeleteLorebook, useUpdateLorebook, useUploadLorebookImage } from "../hooks/use-lorebooks";
 import { useCharacters, usePersonas } from "../../characters/hooks/use-characters";
 import type { Lorebook, LorebookCategory } from "@marinara-engine/shared";
 import { showConfirmDialog } from "../../../shared/lib/app-dialogs";
@@ -34,6 +35,7 @@ import { cn } from "../../../shared/lib/utils";
 import { api } from "../../../shared/lib/api-client";
 import { getChatCharacterIds } from "../../../shared/lib/chat-macros";
 import { ExportFormatDialog, type ExportFormatChoice } from "../../../shared/components/ui/ExportFormatDialog";
+import { resolveManagedLocalAssetUrl } from "../../../shared/api/local-file-api";
 
 const CATEGORIES: Array<{ id: LorebookCategory | "all" | "active"; label: string; icon: typeof Globe }> = [
   { id: "all", label: "All", icon: Layers },
@@ -64,6 +66,8 @@ export function LorebooksPanel() {
   const [selectedLorebookIds, setSelectedLorebookIds] = useState<Set<string>>(new Set());
   const [exportingSelected, setExportingSelected] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const lorebookImageInputRef = useRef<HTMLInputElement>(null);
+  const imageTargetLorebookIdRef = useRef<string | null>(null);
 
   // Active chat context for the "Active" filter
   const activeChat = useChatStore((s) => s.activeChat);
@@ -89,6 +93,7 @@ export function LorebooksPanel() {
   const { data: rawPersonas } = usePersonas();
   const deleteLorebook = useDeleteLorebook();
   const updateLorebook = useUpdateLorebook();
+  const uploadLorebookImage = useUploadLorebookImage();
   const openModal = useUIStore((s) => s.openModal);
   const openLorebookDetail = useUIStore((s) => s.openLorebookDetail);
 
@@ -325,8 +330,62 @@ export function LorebooksPanel() {
     exitSelectionMode();
   }, [selectedLorebookIds, deleteLorebook, exitSelectionMode]);
 
+  const handlePickLorebookImage = useCallback((lorebookId: string) => {
+    imageTargetLorebookIdRef.current = lorebookId;
+    if (lorebookImageInputRef.current) {
+      lorebookImageInputRef.current.value = "";
+      lorebookImageInputRef.current.click();
+    }
+  }, []);
+
+  const handleLorebookImageSelected = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      const lorebookId = imageTargetLorebookIdRef.current;
+      if (!file || !lorebookId) return;
+
+      if (!file.type.startsWith("image/")) {
+        imageTargetLorebookIdRef.current = null;
+        toast.error("Choose an image file for the lorebook picture");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const image = typeof reader.result === "string" ? reader.result : "";
+        if (!image) {
+          toast.error("Could not read that image");
+          return;
+        }
+
+        try {
+          await uploadLorebookImage.mutateAsync({ id: lorebookId, image, filename: file.name });
+          toast.success("Lorebook picture updated");
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Failed to upload lorebook picture");
+        } finally {
+          imageTargetLorebookIdRef.current = null;
+        }
+      };
+      reader.onerror = () => {
+        imageTargetLorebookIdRef.current = null;
+        toast.error("Could not read that image");
+      };
+      reader.readAsDataURL(file);
+    },
+    [uploadLorebookImage],
+  );
+
   return (
     <div className="flex flex-col gap-2 p-3">
+      <input
+        ref={lorebookImageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleLorebookImageSelected}
+      />
+
       {/* Action buttons */}
       <div className="flex gap-2">
         <button
@@ -592,6 +651,7 @@ export function LorebooksPanel() {
                               deleteLorebook.mutate(lb.id);
                             }
                           }}
+                          onImagePick={() => handlePickLorebookImage(lb.id)}
                           selectionMode={selectionMode}
                           isSelected={selectedLorebookIds.has(lb.id)}
                           onToggleSelect={() => toggleSelection(lb.id)}
@@ -625,7 +685,8 @@ export function LorebooksPanel() {
                       ) {
                         deleteLorebook.mutate(lb.id);
                       }
-                    }}
+                      }}
+                    onImagePick={() => handlePickLorebookImage(lb.id)}
                     selectionMode={selectionMode}
                     isSelected={selectedLorebookIds.has(lb.id)}
                     onToggleSelect={() => toggleSelection(lb.id)}
@@ -644,6 +705,7 @@ function LorebookRow({
   personaName,
   onClick,
   onDelete,
+  onImagePick,
   selectionMode,
   isSelected,
   onToggleSelect,
@@ -653,12 +715,40 @@ function LorebookRow({
   personaName?: string;
   onClick: () => void;
   onDelete: () => void;
+  onImagePick: () => void;
   selectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: () => void;
 }) {
   const gradient = CATEGORY_COLORS[lorebook.category] ?? CATEGORY_COLORS.uncategorized;
   const CatIcon = CATEGORIES.find((c) => c.id === lorebook.category)?.icon ?? BookOpen;
+  const [resolvedImagePath, setResolvedImagePath] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setResolvedImagePath(null);
+    if (!lorebook.imagePath) return;
+    resolveManagedLocalAssetUrl(lorebook.imagePath)
+      .then((url) => {
+        if (!cancelled) setResolvedImagePath(url);
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedImagePath(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lorebook.imagePath]);
+
+  const imageContent = resolvedImagePath ? (
+    <img src={resolvedImagePath} alt="" className="h-full w-full object-cover" draggable={false} />
+  ) : (
+    <CatIcon size="1rem" />
+  );
+  const imageClasses = cn(
+    "relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl text-white shadow-sm",
+    lorebook.imagePath ? "bg-[var(--muted)]" : `bg-gradient-to-br ${gradient}`,
+  );
 
   return (
     <div
@@ -686,14 +776,28 @@ function LorebookRow({
           <span className="text-[0.75rem]">✓</span>
         </button>
       )}
-      <div
-        className={cn(
-          "flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm",
-          gradient,
-        )}
-      >
-        <CatIcon size="1rem" />
-      </div>
+      {selectionMode ? (
+        <div className={imageClasses}>{imageContent}</div>
+      ) : (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onImagePick();
+          }}
+          className={cn(
+            imageClasses,
+            "transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-amber-400/50",
+          )}
+          title={lorebook.imagePath ? "Replace lorebook picture" : "Upload lorebook picture"}
+          aria-label={lorebook.imagePath ? "Replace lorebook picture" : "Upload lorebook picture"}
+        >
+          {imageContent}
+          <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
+            <Camera size="0.875rem" />
+          </span>
+        </button>
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-sm font-medium">{lorebook.name}</span>

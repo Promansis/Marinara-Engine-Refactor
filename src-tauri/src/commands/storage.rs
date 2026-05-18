@@ -27,6 +27,8 @@ mod imports;
 mod integrations;
 mod knowledge;
 mod llm;
+mod lorebook_images;
+mod media_uploads;
 mod prompts;
 mod router;
 mod shared;

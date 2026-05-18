@@ -18,6 +18,7 @@ use super::imports::*;
 use super::integrations::*;
 use super::knowledge::*;
 use super::llm::*;
+use super::lorebook_images::*;
 use super::prompts::*;
 use super::shared::*;
 use super::sprites::*;
@@ -366,11 +367,17 @@ pub(crate) async fn route_request(
             route.query.get("q").map(String::as_str).unwrap_or(""),
         ),
         ["lorebooks", "scan", chat_id] if method == "GET" => scan_lorebooks(state, chat_id),
+        ["lorebooks", "images", "file-path", encoded] if method == "GET" => {
+            lorebook_image_file_path(state, encoded)
+        }
         ["lorebooks", lorebook_id, "export"] if method == "GET" => export_lorebook(
             state,
             lorebook_id,
             route.query.get("format").map(String::as_str),
         ),
+        ["lorebooks", lorebook_id, "image"] if method == "POST" => {
+            update_lorebook_image(state, lorebook_id, body)
+        }
         ["lorebooks", lorebook_id, "vectorize"] if method == "POST" => {
             vectorize_lorebook(state, lorebook_id, body).await
         }

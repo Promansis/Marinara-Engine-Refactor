@@ -64,7 +64,6 @@ import {
   DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_TOOLS,
   DEFAULT_AGENT_MAX_TOKENS,
-  LOCAL_SIDECAR_CONNECTION_ID,
   MAX_AGENT_MAX_TOKENS,
   MIN_AGENT_MAX_TOKENS,
   getDefaultBuiltInAgentSettings,
@@ -85,6 +84,10 @@ function createCustomAgentType(name: string): string {
       ? globalThis.crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   return `custom-${slug}-${suffix}`;
+}
+
+function isDeferredLocalModelConnectionId(value: string | null | undefined): boolean {
+  return value === "__local_sidecar__" || value === "sidecar:local" || value?.startsWith("sidecar:") === true;
 }
 
 // Mirrors the server's buildSpotifyRedirectUri rule: Spotify only accepts
@@ -806,9 +809,6 @@ export function AgentEditor() {
               <option value="">
                 {defaultAgentConn ? `Agent default (${defaultAgentConn.name})` : "Use chat connection"}
               </option>
-              {false && import.meta.env.VITE_MARINARA_LITE !== "true" && (
-                <option value={LOCAL_SIDECAR_CONNECTION_ID}>Local Model (sidecar)</option>
-              )}
               {llmConnections.map((conn) => (
                 <option key={conn.id} value={conn.id}>
                   {conn.name} ({conn.provider})
@@ -816,8 +816,8 @@ export function AgentEditor() {
               ))}
             </select>
             <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              {localConnectionId === LOCAL_SIDECAR_CONNECTION_ID
-                ? "The local sidecar connection is deferred in the Tauri build. Choose a configured connection for this agent."
+              {isDeferredLocalModelConnectionId(localConnectionId)
+                ? "This agent was using a deferred local model option. Choose a configured connection before saving."
                 : "When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active connection."}
             </p>
           </FieldGroup>
