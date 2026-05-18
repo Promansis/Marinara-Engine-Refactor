@@ -20,6 +20,7 @@ Last updated: 2026-05-18.
 - [x] Replace server-stub frontend API with Tauri-backed API adapter.
 - [~] Build Rust capability commands for storage, assets/imports, LLM transport, integrations, and updates.
 - [x] Removed direct browser `fetch('/api/...')` calls for local Fastify routes; local app calls now go through Tauri API adapters or local TypeScript helpers.
+- [x] Removed remaining active source `fetch()` calls; non-API blob loading no longer uses browser fetch.
 - [x] Removed sidecar from active onboarding, agent, connection, and game scene UI; sidecar and sync remain deferred scope only.
 
 ## TypeScript Engine Layers
@@ -44,7 +45,7 @@ Last updated: 2026-05-18.
 - [x] `src-tauri/src/commands/mod.rs` command registration.
 - [x] `src-tauri/src/commands/storage.rs` command facade split into capability modules under `src-tauri/src/commands/storage/`.
 - [~] `src-tauri/src/commands/assets.rs` asset commands; currently routed through the storage command shim and `marinara-assets`.
-- [~] Import commands: character JSON/PNG/CharX, native `.marinara` packages, lorebooks, presets, personas, JSONL chat imports, native folder picking, and basic ST bulk scan/run are routed through native storage; remaining work is current-format importer heuristic fidelity. Legacy backup/profile/archive compatibility is out of runtime scope and belongs in a future explicit migration script.
+- [x] Import commands: character JSON/PNG/CharX, native `.marinara` packages, lorebooks, presets, personas, JSONL chat imports, native folder picking, ST bulk scan/run, current-format media restore, folder/group remapping, and current Marinara/ST heuristic handling are routed through native storage.
 - [ ] `src-tauri/src/commands/llm.rs` provider transport commands.
 - [ ] `src-tauri/src/commands/integrations.rs` integration commands.
 - [ ] `src-tauri/src/commands/updates.rs` update commands.
@@ -55,7 +56,7 @@ Last updated: 2026-05-18.
 - [x] `src-tauri/crates/assets` file/blob/media handling for managed game assets and backgrounds.
 - [~] `src-tauri/crates/import` import file helpers.
 - [x] `src-tauri/crates/llm` provider transport.
-- [~] `src-tauri/crates/integrations` Spotify, TTS, translation, and haptic transport are wired through native commands; webhook/tool edge cases still need parity review.
+- [x] `src-tauri/crates/integrations` Spotify, TTS, translation, and haptic transport are wired through native commands.
 - [x] `src-tauri/crates/updates` update check/apply planning.
 - [d] `src-tauri/crates/sidecar` deferred external-service scope.
 - [d] `src-tauri/crates/sync-client` deferred external-service scope.
@@ -109,9 +110,9 @@ Last updated: 2026-05-18.
 - [x] Reworked import routes for the sidebar/settings import flows: ST character inspect/batch now returns the frontend shape, PNG character-card metadata is parsed from `chara`/`ccv3` chunks, CharX reads `card.json` and embedded icons, and native `.marinara` packages read `data.json` plus avatar assets.
 - [x] Added native JSONL chat import and branch import routes used by the chat/settings import UI.
 - [x] Added local SillyTavern folder browsing response shape plus basic ST bulk scan/run for characters, chats, group chats, presets, lorebooks, backgrounds, and personas.
-- [~] Replaced game/encounter route placeholders with local Tauri mechanics for dice, skill checks, time/weather, random encounters, combat rounds, loot, journal entries, checkpoints, party cards, map movement, and encounter init/action/summary fallbacks. LLM-authored GM prose and generated image/audio assets still depend on broader provider/orchestration migration.
-- [~] Replaced chat/agent no-op route responses for autonomous unread state, local summaries, memory chunks, agent memory, echo-message cleanup, retry bookkeeping, cadence status, and conversation schedule/status checks with durable Tauri storage-backed behavior. LLM-backed summary/schedule parity remains pending in the broader generation/provider migration.
-- [~] Normalized lorebook imports into lorebook rows plus `lorebook-entries`; deeper current-format importer parity, category/tag heuristics, and new-app media handling still need follow-up.
+- [x] Replaced game/encounter route placeholders with local Tauri mechanics for dice, skill checks, time/weather, random encounters, combat rounds, loot, journal entries, checkpoints, party cards, map movement, encounter init/action/summary, LLM-backed setup/session carryover/conclusion, and generated game image/audio orchestration.
+- [x] Replaced chat/agent no-op route responses for autonomous unread state, LLM-backed summaries/consolidation, memory chunks, agent memory, echo-message cleanup, retry bookkeeping, cadence status, generated schedules, autonomous timing, and conversation schedule/status checks with migrated TypeScript orchestration over Tauri storage/LLM capabilities.
+- [x] Normalized lorebook imports into lorebook rows plus `lorebook-entries`, including current-format category/tag handling and new-app media/profile packaging.
 - [x] Replaced haptic placeholders with the open-source Rust `buttplug` client package, Intiface websocket connect/disconnect, scan, device listing, output commands, auto-stop, and stop-all routes.
 - [~] Replaced TTS placeholders with native provider transport for OpenAI-compatible, ElevenLabs, NanoGPT ElevenLabs, and PocketTTS voice/audio routes; browser playback remains frontend-owned.
 - [~] Replaced Spotify placeholders with OAuth, token refresh, status, access-token, player, devices, playlists, playback controls, DJ playlist, and game scene candidate/play routes over native Spotify Web API transport.
@@ -121,28 +122,26 @@ Last updated: 2026-05-18.
 - [x] Replaced bulk character/persona/preset/lorebook export JSON responses with ZIP binary download payloads, and replaced character PNG export placeholder with an embedded `chara` PNG card.
 - [x] Replaced avatar upload echo routes with local avatar persistence for characters, personas, and NPC portraits while keeping frontend-compatible avatar paths.
 - [x] Replaced persona activation, prompt default, chat-preset active, regex reorder, game-assets rescan/open-folder/folder-description, scoped admin expunge, and character-version restore placeholders with storage-backed behavior.
-- [~] Replaced game setup, session lorebook regeneration, and campaign progression stubs with LLM-backed native flows plus deterministic local fallbacks.
+- [x] Replaced game setup, session lorebook regeneration, session recap/carryover/conclusion, and campaign progression stubs with LLM-backed native flows plus deterministic local fallbacks where provider calls fail.
 - [x] Removed active `/game`, `/encounter`, `/conversation`, `/agents/retry`, and `/sidecar` frontend product-route calls; normal mode workflows now use TypeScript mode APIs over storage/assets/LLM/integration capabilities.
-- [x] Split shared chat/message repository hooks and shared conversation UI types into `src/features/conversation`, so conversation, roleplay, and game mode code do not depend on `features/chats` hooks.
+- [x] Split shared chat/message repository hooks, common chat components, and chat UI types into neutral `src/features/chats`, so conversation, roleplay, and game mode code no longer depend on `features/conversation`.
 - [x] Wired custom static/webhook tools into the migrated agent runtime through native `/custom-tools/execute`; script execution remains explicitly disabled in the native runtime.
-- [~] Expanded native image-provider parity: NovelAI native ZIP/image responses, RunPod Serverless ComfyUI, ComfyUI default/custom workflows, OpenRouter/Gemini chat image parsing, xAI aspect-ratio payloads, Automatic1111 defaults, and selected image connection use for sprite generation are wired. Remaining image work is edge parity for reference-image/provider-specific request surfaces and live-provider QA.
+- [x] Expanded native image-provider parity: OpenAI/GPT image edits, NanoGPT, Together, Stability v1/v2, Horde, ComfyUI reference uploads, RunPod Serverless ComfyUI, Draw Things/A1111 img2img, NovelAI raw references/ZIP/image responses, OpenRouter/Gemini chat image parsing, xAI aspect-ratio payloads, transparent-background options, and selected image connection use for sprite generation are wired.
 - [x] Removed active settings copy that presented theme/extension data as server-synced runtime behavior; sync remains deferred scope.
 - [x] Removed runtime legacy asset URL compatibility and added the no-legacy-runtime rule to `AGENTS.md`; old data conversion will be a separate migration script.
 - [x] Removed browser-era custom theme/extension migration hooks, stale settings-sync/CSRF files, and sessionStorage draft migration fallbacks.
 - [x] Replaced the historical UI-store `migrate` chain with a fresh Tauri persistence key, and split `ui.store.ts` into focused store, model/helper, and persistence modules.
 - [x] Deleted sidecar-only frontend store/modal/contracts from the active TypeScript app and moved active scene-analysis contracts into neutral scene types.
+- [x] Moved bot-browser provider parity behind Rust transport for Janny token refresh, CharacterTavern cookies/filters, Pygmalion token/session cleanup, Wyvern creator routes, DataCat session minting, and provider asset validation.
+- [x] Rebuilt current-format imports/exports for Marinara character/persona/lorebook/preset envelopes, SillyTavern-compatible exports, embedded character media, sprite/gallery restore, prompt group/section remapping, and embedded lorebook pointer cleanup.
+- [x] Replaced prompt-review fallback assembly with full preset/section/group/choice-block orchestration over migrated storage and LLM streaming.
+- [x] Removed duplicate API re-export shims, deleted conversation-mode re-export wrappers, removed active sidecar/sync runtime branches, removed active legacy runtime compatibility paths, and kept old-data conversion out of normal app code.
 
-## Current Blockers Before Migration Can Be Called Complete
+## Remaining External QA
 
-- [~] Finish full image-generation provider parity edge cases and live-provider QA across OpenAI-compatible image APIs, NovelAI, Stability, Horde, ComfyUI, Automatic1111, RunPod ComfyUI, Draw Things, NanoGPT, xAI, OpenRouter, and Gemini image responses.
-- [~] Finish TTS edge parity for provider-specific voice metadata, streaming/playback timing, and live-device QA.
-- [~] Finish Spotify and haptic live-provider/device QA. Native Spotify Web API transport and Rust Buttplug/Intiface transport are wired, but hardware/account-dependent paths still need manual verification.
-- [~] Finish sprite sheet generation, cleanup, and restore parity; native routes now do file-backed sprite upload/list/delete, selected-provider sprite generation, image crate sheet slicing, built-in white-matte cleanup, and cleanup backup/restore, but provider-specific reference-image edge parity still remains.
-- [~] Finish bot-browser parity for all non-Chub source edge cases, upstream schema drift, and authenticated source session recovery.
-- [~] Finish current-format import/export parity for SillyTavern/Marinara media handling and original importer heuristics. Do not add runtime compatibility for legacy backups, old profile archives, or old server-shaped asset URLs.
-- [~] Finish game route parity for deeper mechanics and long-running campaign state behaviors beyond the native setup/lorebook/progression pass.
-- [~] Finish prompt reviewer, character maker, persona maker, lorebook maker, and generation-agent workflows so they use migrated orchestration rather than minimal deterministic fallbacks. Character/persona/lorebook maker now call the migrated Rust LLM provider path; prompt reviewer and generation-agent parity still need follow-up.
-- [ ] Finish LLM-backed conversation summaries, automatic daily/weekly consolidation, generated schedules, and autonomous timing parity on top of the local storage-backed chat/agent routes.
+- [ ] Run live-account QA for upstream bot-browser providers that require credentials or are subject to Cloudflare/session policy changes.
+- [ ] Run live-provider QA across paid image providers, TTS providers, Spotify accounts/devices, and physical Buttplug/Intiface hardware. Native code paths are wired; these checks require external services/devices.
+- [ ] Run full manual Tauri UI smoke testing for imports/exports, sprite cleanup/restore, long-running game sessions, and autonomous scheduling with real user data. No source-level placeholder or old local-server blocker is currently known outside deferred sidecar/sync.
 
 ## Verification
 
@@ -163,3 +162,7 @@ Last updated: 2026-05-18.
 - [x] `cargo check --manifest-path src-tauri/Cargo.toml` passed on 2026-05-18 after no-legacy-runtime/UI-store cleanup.
 - [x] `pnpm check:docs` passed on 2026-05-18 after no-legacy-runtime/UI-store cleanup.
 - [x] `pnpm build` passed on 2026-05-18 after no-legacy-runtime/UI-store cleanup, with Vite large-chunk warnings only.
+- [x] `pnpm typecheck` passed on 2026-05-18 after full source migration parity and mode-separation cleanup.
+- [x] `cargo check --manifest-path src-tauri/Cargo.toml` passed on 2026-05-18 after full source migration parity and mode-separation cleanup.
+- [x] `pnpm check:docs` passed on 2026-05-18 after full source migration parity checklist update.
+- [x] `pnpm build` passed on 2026-05-18 after full source migration parity and mode-separation cleanup, with Vite large-chunk warnings only.

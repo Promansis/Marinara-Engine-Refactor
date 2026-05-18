@@ -10,7 +10,7 @@ import { cn } from "../../lib/utils";
 import { useConnections } from "../../../features/connections/hooks/use-connections";
 import { useSpriteCapabilities } from "../../../features/characters/hooks/use-characters";
 import { useUIStore } from "../../stores/ui.store";
-import { api } from "../../lib/api-client";
+import { api } from "../../api/api-client";
 import { ImagePromptReviewModal, type ImagePromptOverride, type ImagePromptReviewItem } from "./ImagePromptReviewModal";
 
 // ── Types ──

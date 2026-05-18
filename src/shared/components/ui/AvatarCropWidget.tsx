@@ -13,7 +13,7 @@
 // ratio without distortion.
 import { useEffect, useRef, useState } from "react";
 import { Crop, Maximize2, RotateCcw, X } from "lucide-react";
-import { type AvatarCrop, type LegacyAvatarCrop, getAvatarCropStyle, isLegacyAvatarCrop } from "../../lib/utils";
+import { type AvatarCrop, getAvatarCropStyle } from "../../lib/utils";
 
 interface CropPx {
   x: number;
@@ -27,9 +27,8 @@ export interface AvatarCropWidgetProps {
   /** Image URL or data URL to crop. */
   src: string;
   alt: string;
-  /** Currently saved crop. Pass null when none has been set. Accepts the legacy
-   *  shape for read; on first interaction the widget writes the current shape. */
-  crop: AvatarCrop | LegacyAvatarCrop | null;
+  /** Currently saved crop. Pass null when none has been set. */
+  crop: AvatarCrop | null;
   /** Fired on every change (drag, corner resize, reset). Always emits the
    *  current AvatarCrop shape. */
   onChange: (next: AvatarCrop) => void;
@@ -81,7 +80,7 @@ export function AvatarCropWidget({ src, alt, crop, onChange }: AvatarCropWidgetP
   useEffect(() => {
     if (!imgRect || dragRef.current) return;
     const { w, h } = imgRect;
-    if (crop && !isLegacyAvatarCrop(crop)) {
+    if (crop) {
       const size = clamp(crop.srcWidth * w, MIN_CROP_PX, Math.min(w, h));
       setCropPx({
         x: clamp(crop.srcX * w, 0, w - size),
@@ -90,9 +89,7 @@ export function AvatarCropWidget({ src, alt, crop, onChange }: AvatarCropWidgetP
       });
       return;
     }
-    // Legacy crop OR null → default to centered max-square. Legacy data still
-    // renders correctly via getAvatarCropStyle's transform path; the cropper
-    // overlay just shows a fresh selection the user can adjust.
+    // No saved crop: default to centered max-square.
     const size = Math.min(w, h);
     setCropPx({ x: (w - size) / 2, y: (h - size) / 2, size });
   }, [crop, imgRect]);
@@ -119,12 +116,8 @@ export function AvatarCropWidget({ src, alt, crop, onChange }: AvatarCropWidgetP
     const h = natH * scale;
     setImgRect({ w, h });
 
-    // Init crop overlay from saved value when possible. Legacy crops convert
-    // to "centered max square" because the legacy zoom/pan model can't be
-    // losslessly mapped without a render-time round-trip; the user can re-crop
-    // precisely once the editor opens.
     let initial: CropPx;
-    if (crop && !isLegacyAvatarCrop(crop)) {
+    if (crop) {
       initial = {
         x: crop.srcX * w,
         y: crop.srcY * h,

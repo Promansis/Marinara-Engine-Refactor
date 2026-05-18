@@ -1,4 +1,4 @@
-import { api } from "./api-client";
+import { api } from "../api/api-client";
 
 export interface EmbeddedLorebookImportPreview {
   filename: string;

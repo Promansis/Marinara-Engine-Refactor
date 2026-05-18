@@ -29,7 +29,7 @@ import { useUpdateChat, useUpdateChatMetadata, useCreateMessage, chatKeys } from
 import { useChatPresets, useApplyChatPreset } from "../../chat-presets/hooks/use-chat-presets";
 import { useUIStore } from "../../../shared/stores/ui.store";
 import { useChatStore } from "../../../shared/stores/chat.store";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { generateConversationSchedules } from "../../../engine/modes/chat/schedules/schedule.service";
 import { llmApi } from "../../../shared/api/llm-api";
 import { storageApi } from "../../../shared/api/storage-api";

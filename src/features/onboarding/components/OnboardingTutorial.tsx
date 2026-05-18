@@ -8,7 +8,7 @@ import { useCreateChat } from "../../chats/hooks/use-chats";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight, ArrowRightLeft } from "lucide-react";
 import { PROFESSOR_MARI_ID, DEFAULT_CONNECTION_ID } from "@marinara-engine/shared";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 
 // ─── Step definitions ─────────────────────────
 

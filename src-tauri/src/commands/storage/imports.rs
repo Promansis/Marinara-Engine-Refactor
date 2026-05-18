@@ -1,11 +1,14 @@
+use super::media_uploads::{
+    decode_image_payload, extension_for_image_mime, safe_filename, unique_file_path,
+};
 use super::shared::*;
 use super::*;
 mod bulk_imports;
 mod timestamps;
-use timestamps::{apply_timestamp_overrides, timestamp_overrides_from_value};
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use timestamps::{apply_timestamp_overrides, timestamp_overrides_from_value};
 
 fn parse_object(raw: &[u8]) -> AppResult<Value> {
     Ok(serde_json::from_slice(raw)?)
@@ -30,7 +33,6 @@ fn modified_at(path: &Path) -> Value {
         .map(|duration| Value::String(format!("{}", duration.as_millis())))
         .unwrap_or(Value::Null)
 }
-
 
 fn parse_chara_text(text: &str) -> Option<Value> {
     let trimmed = text.trim();
@@ -145,6 +147,13 @@ fn read_zip_entry_names(bytes: &[u8]) -> AppResult<Vec<String>> {
         names.push(file.name().to_string());
     }
     Ok(names)
+}
+
+fn zip_entry_name_case_insensitive(names: &[String], expected: &str) -> Option<String> {
+    names
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case(expected))
+        .cloned()
 }
 
 fn directory_listing(path: PathBuf) -> AppResult<Value> {
@@ -331,9 +340,22 @@ fn string_array(value: Option<&Value>) -> Vec<String> {
             .filter_map(Value::as_str)
             .map(ToOwned::to_owned)
             .collect(),
-        Some(Value::String(raw)) if !raw.trim().is_empty() => vec![raw.to_string()],
+        Some(Value::String(raw)) if !raw.trim().is_empty() => {
+            serde_json::from_str::<Vec<String>>(raw).unwrap_or_else(|_| vec![raw.to_string()])
+        }
         _ => Vec::new(),
     }
+}
+
+fn first_string(values: Vec<Option<&Value>>) -> String {
+    values
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn source_character_data(payload: &Value) -> Value {
@@ -359,20 +381,86 @@ fn source_character_data(payload: &Value) -> Value {
 
 fn embedded_lorebook(payload: &Value) -> Option<Value> {
     let wrapped = source_character_data(payload);
-    wrapped
-        .get("character_book")
+    let mut candidates = Vec::new();
+    if let Some(book) = payload.get("character_book") {
+        candidates.push(book);
+    }
+    if let Some(book) = wrapped.get("character_book") {
+        candidates.push(book);
+    }
+    if let Some(book) = payload
+        .get("data")
+        .and_then(|data| data.get("character_book"))
+    {
+        candidates.push(book);
+    }
+    candidates
+        .into_iter()
         .filter(|book| lorebook_entry_count(book) > 0)
+        .max_by_key(|book| lorebook_entry_count(book))
         .cloned()
+}
+
+fn alt_descriptions(data: &Value) -> Value {
+    data.get("extensions")
+        .and_then(|extensions| extensions.get("altDescriptions"))
         .or_else(|| {
-            payload
-                .get("character_book")
-                .filter(|book| lorebook_entry_count(book) > 0)
-                .cloned()
+            data.get("extensions")
+                .and_then(|extensions| extensions.get("alt_descriptions"))
         })
+        .or_else(|| data.get("altDescriptions"))
+        .or_else(|| data.get("alternate_descriptions"))
+        .filter(|value| value.is_array())
+        .cloned()
+        .unwrap_or_else(|| json!([]))
+}
+
+fn strip_stale_embedded_lorebook_pointer(data: &mut Value) {
+    if let Some(book) = data.pointer_mut("/extensions/importMetadata/embeddedLorebook") {
+        if let Some(object) = book.as_object_mut() {
+            object.remove("lorebookId");
+        }
+    }
+}
+
+fn character_import_extensions(payload: &Value, data: &Value, embedded: Option<&Value>) -> Value {
+    let mut extensions = data
+        .get("extensions")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    extensions
+        .entry("altDescriptions".to_string())
+        .or_insert_with(|| alt_descriptions(data));
+
+    let import_metadata = extensions
+        .entry("importMetadata".to_string())
+        .or_insert_with(|| json!({}));
+    if let Some(import_metadata) = import_metadata.as_object_mut() {
+        import_metadata.insert(
+            "card".to_string(),
+            json!({
+                "spec": payload.get("spec").and_then(Value::as_str).unwrap_or("chara_card_v2"),
+                "specVersion": payload.get("spec_version").and_then(Value::as_str).unwrap_or("2.0"),
+                "format": payload.get("spec").and_then(Value::as_str).unwrap_or("chara_card_v2")
+            }),
+        );
+        if let Some(book) = embedded {
+            import_metadata.insert(
+                "embeddedLorebook".to_string(),
+                json!({
+                    "hasEmbeddedLorebook": true,
+                    "entries": lorebook_entry_count(book)
+                }),
+            );
+        }
+    }
+    Value::Object(extensions)
 }
 
 fn normalize_character_data(payload: &Value, tag_mode: &str, existing_tags: &[String]) -> Value {
     let data = source_character_data(payload);
+    let embedded = embedded_lorebook(payload);
     let mut tags = string_array(data.get("tags"));
     if tag_mode == "none" {
         tags.clear();
@@ -380,23 +468,39 @@ fn normalize_character_data(payload: &Value, tag_mode: &str, existing_tags: &[St
         let keys: Vec<String> = existing_tags.iter().map(|tag| tag.to_lowercase()).collect();
         tags.retain(|tag| keys.contains(&tag.to_lowercase()));
     }
-    json!({
-        "name": data.get("name").or_else(|| payload.get("char_name")).and_then(Value::as_str).unwrap_or("Imported Character"),
-        "description": data.get("description").or_else(|| payload.get("char_persona")).and_then(Value::as_str).unwrap_or(""),
-        "personality": string_field(&data, "personality"),
-        "scenario": data.get("scenario").or_else(|| payload.get("world_scenario")).and_then(Value::as_str).unwrap_or(""),
-        "first_mes": data.get("first_mes").or_else(|| payload.get("char_greeting")).and_then(Value::as_str).unwrap_or(""),
-        "mes_example": data.get("mes_example").or_else(|| payload.get("example_dialogue")).and_then(Value::as_str).unwrap_or(""),
-        "creator_notes": string_field(&data, "creator_notes"),
-        "system_prompt": string_field(&data, "system_prompt"),
-        "post_history_instructions": string_field(&data, "post_history_instructions"),
+    let mut normalized = json!({
+        "name": first_string(vec![data.get("name"), payload.get("char_name"), payload.get("name")]).if_empty("Imported Character"),
+        "description": first_string(vec![data.get("description"), payload.get("char_persona")]),
+        "personality": first_string(vec![data.get("personality"), payload.get("personality")]),
+        "scenario": first_string(vec![data.get("scenario"), payload.get("world_scenario")]),
+        "first_mes": first_string(vec![data.get("first_mes"), payload.get("char_greeting"), payload.get("first_mes")]),
+        "mes_example": first_string(vec![data.get("mes_example"), payload.get("example_dialogue")]),
+        "creator_notes": first_string(vec![data.get("creator_notes"), payload.get("creatorcomment"), payload.get("comment")]),
+        "system_prompt": first_string(vec![data.get("system_prompt"), payload.get("system_prompt")]),
+        "post_history_instructions": first_string(vec![data.get("post_history_instructions"), payload.get("post_history_instructions")]),
         "tags": tags,
-        "creator": string_field(&data, "creator"),
-        "character_version": data.get("character_version").and_then(Value::as_str).unwrap_or("1.0"),
+        "creator": first_string(vec![data.get("creator"), payload.get("creator")]),
+        "character_version": first_string(vec![data.get("character_version"), payload.get("character_version")]).if_empty("1.0"),
         "alternate_greetings": string_array(data.get("alternate_greetings")),
-        "extensions": data.get("extensions").filter(|value| value.is_object()).cloned().unwrap_or_else(|| json!({ "altDescriptions": [] })),
-        "character_book": embedded_lorebook(payload).unwrap_or(Value::Null),
-    })
+        "extensions": character_import_extensions(payload, &data, embedded.as_ref()),
+        "character_book": embedded.unwrap_or(Value::Null),
+    });
+    strip_stale_embedded_lorebook_pointer(&mut normalized);
+    normalized
+}
+
+trait ImportStringFallback {
+    fn if_empty(self, fallback: &str) -> String;
+}
+
+impl ImportStringFallback for String {
+    fn if_empty(self, fallback: &str) -> String {
+        if self.trim().is_empty() {
+            fallback.to_string()
+        } else {
+            self
+        }
+    }
 }
 
 fn lorebook_entries(value: &Value) -> Vec<Value> {
@@ -503,6 +607,85 @@ fn normalize_lorebook_entry(lorebook_id: &str, entry: &Value, index: usize) -> V
     })
 }
 
+fn normalize_imported_lorebook_entry(lorebook_id: &str, entry: &Value, index: usize) -> Value {
+    let mut object =
+        ensure_object(normalize_lorebook_entry(lorebook_id, entry, index)).unwrap_or_default();
+    if let Some(source) = entry.as_object() {
+        for (key, value) in source {
+            if key != "id" && key != "lorebookId" {
+                object.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    if !object.contains_key("keys") {
+        if let Some(keys) = entry.get("key").or_else(|| entry.get("keys")) {
+            object.insert(
+                "keys".to_string(),
+                Value::Array(
+                    string_array(Some(keys))
+                        .into_iter()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+        }
+    }
+    if !object.contains_key("secondaryKeys") {
+        if let Some(keys) = entry
+            .get("keysecondary")
+            .or_else(|| entry.get("secondary_keys"))
+            .or_else(|| entry.get("secondaryKeys"))
+        {
+            object.insert(
+                "secondaryKeys".to_string(),
+                Value::Array(
+                    string_array(Some(keys))
+                        .into_iter()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+        }
+    }
+    if let Some(disabled) = entry.get("disable").and_then(Value::as_bool) {
+        object.insert("enabled".to_string(), Value::Bool(!disabled));
+    }
+    if let Some(position) = object.get("position").cloned() {
+        let normalized_position = match position {
+            Value::String(raw) if raw == "after_char" => Some(1),
+            Value::String(raw) if raw == "at_depth" || raw == "depth" => Some(2),
+            Value::String(raw) => raw.parse::<i64>().ok(),
+            Value::Number(number) => number.as_i64(),
+            _ => None,
+        };
+        if let Some(position) = normalized_position {
+            object.insert("position".to_string(), json!(position));
+        }
+    }
+    if !matches!(
+        object.get("role").and_then(Value::as_str),
+        Some("user" | "assistant" | "system")
+    ) {
+        object.insert("role".to_string(), Value::String("system".to_string()));
+    }
+    object.insert(
+        "lorebookId".to_string(),
+        Value::String(lorebook_id.to_string()),
+    );
+    for key in [
+        "id",
+        "key",
+        "keysecondary",
+        "secondary_keys",
+        "disable",
+        "uid",
+    ] {
+        object.remove(key);
+    }
+    Value::Object(object)
+}
+
 fn normalize_lorebook(
     payload: &Value,
     fallback_name: &str,
@@ -564,6 +747,49 @@ fn create_lorebook_from_payload(
         "entriesImported": entries.len(),
         "lorebook": record
     }))
+}
+
+fn patch_imported_character_lorebook_pointer(
+    state: &AppState,
+    character_id: &str,
+    lorebook_id: &str,
+    entries_imported: usize,
+) -> AppResult<()> {
+    let character = get_required(state, "characters", character_id)?;
+    let mut data = character
+        .get("data")
+        .and_then(Value::as_str)
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .unwrap_or_else(|| json!({}));
+    let Some(data_object) = data.as_object_mut() else {
+        return Ok(());
+    };
+    let extensions = data_object
+        .entry("extensions".to_string())
+        .or_insert_with(|| json!({}));
+    let Some(extensions) = extensions.as_object_mut() else {
+        return Ok(());
+    };
+    let import_metadata = extensions
+        .entry("importMetadata".to_string())
+        .or_insert_with(|| json!({}));
+    let Some(import_metadata) = import_metadata.as_object_mut() else {
+        return Ok(());
+    };
+    import_metadata.insert(
+        "embeddedLorebook".to_string(),
+        json!({
+            "hasEmbeddedLorebook": true,
+            "lorebookId": lorebook_id,
+            "entriesImported": entries_imported
+        }),
+    );
+    state.storage.patch(
+        "characters",
+        character_id,
+        json!({ "data": serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string()) }),
+    )?;
+    Ok(())
 }
 
 fn import_st_character_payload(
@@ -628,6 +854,17 @@ fn import_st_character_payload(
                 &format!("{name}'s Lorebook"),
                 character_id,
             )?;
+            if let (Some(character_id), Some(lorebook_id)) = (
+                character_id,
+                lorebook_result.get("lorebookId").and_then(Value::as_str),
+            ) {
+                patch_imported_character_lorebook_pointer(
+                    state,
+                    character_id,
+                    lorebook_id,
+                    lorebook_entry_count(book),
+                )?;
+            }
         }
     }
 
@@ -680,10 +917,13 @@ fn import_st_character_batch(state: &AppState, body: Value) -> AppResult<Value> 
     for file in files {
         let filename = file.name.clone();
         let mut file_body = body.clone();
-        if let Some(entry) = timestamps_by_name
-            .get_mut(&filename)
-            .and_then(|entries| if entries.is_empty() { None } else { Some(entries.remove(0)) })
-        {
+        if let Some(entry) = timestamps_by_name.get_mut(&filename).and_then(|entries| {
+            if entries.is_empty() {
+                None
+            } else {
+                Some(entries.remove(0))
+            }
+        }) {
             if let Some(last_modified) = entry.get("lastModified").cloned() {
                 if let Some(object) = file_body.as_object_mut() {
                     object.insert(
@@ -760,7 +1000,9 @@ fn import_marinara_package(state: &AppState, body: Value) -> AppResult<Value> {
         ));
     }
 
-    let data_bytes = read_zip_entry(&uploaded.bytes, "data.json")?
+    let data_entry = zip_entry_name_case_insensitive(&names, "data.json")
+        .ok_or_else(|| AppError::invalid_input(".marinara package is missing data.json"))?;
+    let data_bytes = read_zip_entry(&uploaded.bytes, &data_entry)?
         .ok_or_else(|| AppError::invalid_input(".marinara package is missing data.json"))?;
     if data_bytes.len() > MAX_DATA_JSON_BYTES {
         return Err(AppError::invalid_input("data.json in package is too large"));
@@ -771,7 +1013,11 @@ fn import_marinara_package(state: &AppState, body: Value) -> AppResult<Value> {
         .iter()
         .find(|name| {
             let lower = name.to_ascii_lowercase();
-            lower.starts_with("avatar.")
+            Path::new(name)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|filename| filename.to_ascii_lowercase().starts_with("avatar."))
+                .unwrap_or(false)
                 && matches!(
                     lower.rsplit('.').next(),
                     Some("png" | "jpg" | "jpeg" | "webp" | "gif" | "avif")
@@ -821,27 +1067,284 @@ fn data_string_name(record: &Value) -> Option<String> {
         .get("data")
         .and_then(Value::as_str)
         .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-        .and_then(|data| data.get("name").and_then(Value::as_str).map(ToOwned::to_owned))
+        .and_then(|data| {
+            data.get("name")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn data_image_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .filter(|value| value.starts_with("data:image/"))
+        .map(ToOwned::to_owned)
+}
+
+fn remove_import_id(value: &mut Value) {
+    if let Some(object) = value.as_object_mut() {
+        object.remove("id");
+    }
+}
+
+fn remove_fields(value: &mut Value, fields: &[&str]) {
+    if let Some(object) = value.as_object_mut() {
+        for field in fields {
+            object.remove(*field);
+        }
+    }
+}
+
+fn hydrate_metadata_timestamps(value: &mut Value) {
+    let Some(metadata) = value.get_mut("metadata").and_then(Value::as_object_mut) else {
+        return;
+    };
+    if metadata.contains_key("timestamps") {
+        return;
+    }
+    let created_at = metadata.get("createdAt").cloned();
+    let updated_at = metadata.get("updatedAt").cloned();
+    if created_at.is_none() && updated_at.is_none() {
+        return;
+    }
+    metadata.insert(
+        "timestamps".to_string(),
+        json!({
+            "createdAt": created_at.unwrap_or(Value::Null),
+            "updatedAt": updated_at.unwrap_or(Value::Null)
+        }),
+    );
+}
+
+fn inherit_wrapper_timestamps(record: &mut Value, wrapper: &Value) {
+    let Some(timestamps) = wrapper
+        .get("metadata")
+        .and_then(|metadata| metadata.get("timestamps"))
+        .cloned()
+    else {
+        return;
+    };
+    let Some(object) = record.as_object_mut() else {
+        return;
+    };
+    let metadata = object
+        .entry("metadata".to_string())
+        .or_insert_with(|| json!({}));
+    if let Some(metadata) = metadata.as_object_mut() {
+        metadata.entry("timestamps".to_string()).or_insert(timestamps);
+    }
+}
+
+fn array_from_envelope(data: &Value, envelope: &Map<String, Value>, key: &str) -> Vec<Value> {
+    data.get(key)
+        .or_else(|| envelope.get(key))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn extension_from_filename(filename: &str) -> Option<&'static str> {
+    match Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => Some("jpg"),
+        "webp" => Some("webp"),
+        "gif" => Some("gif"),
+        "avif" => Some("avif"),
+        "png" => Some("png"),
+        "svg" => Some("svg"),
+        _ => None,
+    }
+}
+
+fn import_image_filename(raw: Option<&str>, fallback: &str, ext: &str) -> String {
+    let mut filename = raw
+        .filter(|value| !value.trim().is_empty())
+        .map(safe_filename)
+        .unwrap_or_else(|| format!("{}.{}", safe_filename(fallback), ext));
+    if Path::new(&filename).extension().is_none() {
+        filename.push('.');
+        filename.push_str(ext);
+    }
+    filename
+}
+
+fn restore_sprites(state: &AppState, target_id: &str, sprites: Option<&Value>) -> AppResult<usize> {
+    let Some(items) = sprites.and_then(Value::as_array) else {
+        return Ok(0);
+    };
+    if items.is_empty() || target_id.contains('/') || target_id.contains('\\') {
+        return Ok(0);
+    }
+    let dir = state.data_dir.join("sprites").join(target_id);
+    fs::create_dir_all(&dir)?;
+    let mut imported = 0usize;
+    for (index, sprite) in items.iter().enumerate() {
+        let Some(image) = sprite
+            .get("data")
+            .or_else(|| sprite.get("url"))
+            .and_then(Value::as_str)
+            .filter(|value| value.starts_with("data:image/"))
+        else {
+            continue;
+        };
+        let (mime, bytes) = decode_image_payload(image, "sprite")?;
+        let ext = extension_for_image_mime(&mime)
+            .or_else(|| {
+                sprite
+                    .get("filename")
+                    .and_then(Value::as_str)
+                    .and_then(extension_from_filename)
+            })
+            .unwrap_or("png");
+        let fallback = sprite
+            .get("expression")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("sprite-{}", index + 1));
+        let filename = import_image_filename(
+            sprite.get("filename").and_then(Value::as_str),
+            &fallback,
+            ext,
+        );
+        let target = unique_file_path(&dir.join(filename))?;
+        fs::write(target, bytes)?;
+        imported += 1;
+    }
+    Ok(imported)
+}
+
+fn restore_character_gallery(
+    state: &AppState,
+    character_id: &str,
+    gallery: Option<&Value>,
+) -> AppResult<usize> {
+    let Some(items) = gallery.and_then(Value::as_array) else {
+        return Ok(0);
+    };
+    let mut imported = 0usize;
+    for (index, item) in items.iter().enumerate() {
+        let Some(data_url) = item
+            .get("data")
+            .or_else(|| item.get("url"))
+            .and_then(Value::as_str)
+            .filter(|value| value.starts_with("data:image/"))
+        else {
+            continue;
+        };
+        let (mime, _) = decode_image_payload(data_url, "gallery image")?;
+        let ext = extension_for_image_mime(&mime).unwrap_or("png");
+        let filename = import_image_filename(
+            item.get("filename").and_then(Value::as_str),
+            &format!("gallery-{}", index + 1),
+            ext,
+        );
+        state.storage.create(
+            "character-gallery",
+            json!({
+                "characterId": character_id,
+                "filePath": filename,
+                "filename": filename,
+                "url": data_url,
+                "prompt": item.get("prompt").cloned().unwrap_or_else(|| json!("")),
+                "provider": item.get("provider").cloned().unwrap_or_else(|| json!("")),
+                "model": item.get("model").cloned().unwrap_or_else(|| json!("")),
+                "width": item.get("width").cloned().unwrap_or(Value::Null),
+                "height": item.get("height").cloned().unwrap_or(Value::Null)
+            }),
+        )?;
+        imported += 1;
+    }
+    Ok(imported)
 }
 
 fn import_marinara_character(state: &AppState, data: Value) -> AppResult<Value> {
-    let looks_like_storage_record =
-        data.get("data").is_some() || data.get("format").is_some() || data.get("avatarPath").is_some();
+    if data.get("spec").is_some() && data.get("data").is_some_and(Value::is_object) {
+        let mut character_data = data.get("data").cloned().unwrap_or_else(|| json!({}));
+        strip_stale_embedded_lorebook_pointer(&mut character_data);
+        let mut record = json!({
+            "data": serde_json::to_string(&character_data)?,
+            "comment": data
+                .get("metadata")
+                .and_then(|metadata| metadata.get("comment"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            "avatarPath": data_image_string(data.get("avatar")).map(Value::String).unwrap_or(Value::Null),
+            "format": data.get("spec").and_then(Value::as_str).unwrap_or("chara_card_v2"),
+        });
+        if let Some(avatar) = data_image_string(data.get("avatar")) {
+            if let Some(object) = record.as_object_mut() {
+                object.insert("avatar".to_string(), Value::String(avatar));
+            }
+        }
+        let mut timestamp_payload = data.clone();
+        hydrate_metadata_timestamps(&mut timestamp_payload);
+        apply_timestamp_overrides(&mut record, &Value::Null, &timestamp_payload);
+        let character = state.storage.create("characters", record)?;
+        let character_id = character
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::new("storage_error", "Created character is missing an id"))?
+            .to_string();
+        let sprites_imported = restore_sprites(state, &character_id, data.get("sprites"))?;
+        let gallery_imported =
+            restore_character_gallery(state, &character_id, data.get("gallery"))?;
+        let name = character_data
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Imported Character")
+            .to_string();
+        return Ok(json!({
+            "success": true,
+            "type": "marinara_character",
+            "id": character_id,
+            "characterId": character_id,
+            "name": name,
+            "character": character,
+            "spritesImported": sprites_imported,
+            "galleryImported": gallery_imported
+        }));
+    }
+
+    let looks_like_storage_record = data.get("data").is_some()
+        || data.get("format").is_some()
+        || data.get("avatarPath").is_some();
     if !looks_like_storage_record {
         return import_st_character_payload(state, data, None, &Value::Null);
     }
 
-    let mut record_value = with_entity_defaults("characters", data.clone());
+    let mut source = data.clone();
+    remove_fields(&mut source, &["id", "sprites", "gallery", "metadata"]);
+    let mut record_value = with_entity_defaults("characters", source.clone());
     if let Some(avatar) = data.get("avatar").and_then(Value::as_str) {
         if let Some(record) = record_value.as_object_mut() {
             record.insert("avatarPath".to_string(), Value::String(avatar.to_string()));
             record.insert("avatar".to_string(), Value::String(avatar.to_string()));
         }
     }
-    apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
+    let mut timestamp_payload = data.clone();
+    hydrate_metadata_timestamps(&mut timestamp_payload);
+    apply_timestamp_overrides(&mut record_value, &Value::Null, &timestamp_payload);
     let record = state.storage.create("characters", record_value)?;
+    let character_id = record
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::new("storage_error", "Created character is missing an id"))?
+        .to_string();
+    let sprites_imported = restore_sprites(state, &character_id, data.get("sprites"))?;
+    let gallery_imported = restore_character_gallery(state, &character_id, data.get("gallery"))?;
     let name = data_string_name(&record)
-        .or_else(|| record.get("name").and_then(Value::as_str).map(ToOwned::to_owned))
+        .or_else(|| {
+            record
+                .get("name")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
         .unwrap_or_else(|| "Imported Character".to_string());
     Ok(json!({
         "success": true,
@@ -849,36 +1352,66 @@ fn import_marinara_character(state: &AppState, data: Value) -> AppResult<Value> 
         "id": record.get("id").cloned().unwrap_or(Value::Null),
         "characterId": record.get("id").cloned().unwrap_or(Value::Null),
         "name": name,
-        "character": record
+        "character": record,
+        "spritesImported": sprites_imported,
+        "galleryImported": gallery_imported
     }))
 }
 
 fn import_marinara_persona(state: &AppState, data: Value) -> AppResult<Value> {
-    let mut record_value = with_entity_defaults("personas", data.clone());
+    let mut source = data.clone();
+    remove_fields(&mut source, &["id", "metadata", "avatar", "sprites"]);
+    let mut record_value = with_entity_defaults("personas", source);
     if let Some(avatar) = data.get("avatar").and_then(Value::as_str) {
         if let Some(record) = record_value.as_object_mut() {
             record.insert("avatarPath".to_string(), Value::String(avatar.to_string()));
             record.insert("avatar".to_string(), Value::String(avatar.to_string()));
         }
     }
-    apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
+    let mut timestamp_payload = data.clone();
+    hydrate_metadata_timestamps(&mut timestamp_payload);
+    apply_timestamp_overrides(&mut record_value, &Value::Null, &timestamp_payload);
     let record = state.storage.create("personas", record_value)?;
+    let persona_id = record
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::new("storage_error", "Created persona is missing an id"))?
+        .to_string();
+    let sprites_imported = restore_sprites(state, &persona_id, data.get("sprites"))?;
     Ok(json!({
         "success": true,
         "type": "marinara_persona",
         "id": record.get("id").cloned().unwrap_or(Value::Null),
-        "name": record.get("name").cloned().unwrap_or(Value::Null)
+        "name": record.get("name").cloned().unwrap_or(Value::Null),
+        "spritesImported": sprites_imported
     }))
 }
 
-fn import_marinara_lorebook(state: &AppState, envelope: &Map<String, Value>, data: Value) -> AppResult<Value> {
-    let mut lorebook = with_entity_defaults("lorebooks", data.clone());
-    if let Some(image) = data.get("avatar").or_else(|| data.get("image")).and_then(Value::as_str) {
+fn import_marinara_lorebook(
+    state: &AppState,
+    envelope: &Map<String, Value>,
+    data: Value,
+) -> AppResult<Value> {
+    let mut lorebook_data = data
+        .get("lorebook")
+        .cloned()
+        .unwrap_or_else(|| data.clone());
+    inherit_wrapper_timestamps(&mut lorebook_data, &data);
+    remove_import_id(&mut lorebook_data);
+    remove_fields(&mut lorebook_data, &["entries", "folders"]);
+    let mut lorebook = with_entity_defaults("lorebooks", lorebook_data.clone());
+    if let Some(image) = data
+        .get("avatar")
+        .or_else(|| data.get("image"))
+        .and_then(Value::as_str)
+    {
         if let Some(record) = lorebook.as_object_mut() {
             record.insert("imagePath".to_string(), Value::String(image.to_string()));
         }
     }
-    apply_timestamp_overrides(&mut lorebook, &Value::Null, &data);
+    let mut timestamp_payload = lorebook_data.clone();
+    hydrate_metadata_timestamps(&mut timestamp_payload);
+    apply_timestamp_overrides(&mut lorebook, &Value::Null, &timestamp_payload);
     let record = state.storage.create("lorebooks", lorebook)?;
     let lorebook_id = record
         .get("id")
@@ -887,34 +1420,61 @@ fn import_marinara_lorebook(state: &AppState, envelope: &Map<String, Value>, dat
         .to_string();
 
     let mut folder_id_map: HashMap<String, String> = HashMap::new();
-    for folder in envelope
-        .get("folders")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-    {
-        let old_id = folder.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
+    let mut pending_folder_parents: Vec<(String, String)> = Vec::new();
+    for folder in array_from_envelope(&data, envelope, "folders") {
+        let old_id = folder
+            .get("id")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let old_parent_id = folder
+            .get("parentFolderId")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
         let mut folder_record = ensure_object(folder)?;
         folder_record.remove("id");
+        folder_record.remove("lorebookId");
         folder_record.insert("lorebookId".to_string(), Value::String(lorebook_id.clone()));
+        if old_parent_id.is_some() {
+            folder_record.insert("parentFolderId".to_string(), Value::Null);
+        }
         let created = state
             .storage
             .create("lorebook-folders", Value::Object(folder_record))?;
         if let (Some(old_id), Some(new_id)) = (
             old_id,
-            created.get("id").and_then(Value::as_str).map(ToOwned::to_owned),
+            created
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
         ) {
             folder_id_map.insert(old_id, new_id);
         }
+        if let (Some(new_id), Some(old_parent_id)) = (
+            created
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            old_parent_id,
+        ) {
+            pending_folder_parents.push((new_id, old_parent_id));
+        }
+    }
+    for (folder_id, old_parent_id) in pending_folder_parents {
+        if let Some(new_parent_id) = folder_id_map.get(&old_parent_id) {
+            state.storage.patch(
+                "lorebook-folders",
+                &folder_id,
+                json!({ "parentFolderId": new_parent_id }),
+            )?;
+        }
     }
 
-    let exported_entries = envelope
-        .get("entries")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_else(|| lorebook_entries(&data));
+    let mut exported_entries = array_from_envelope(&data, envelope, "entries");
+    if exported_entries.is_empty() {
+        exported_entries = lorebook_entries(&data);
+    }
     for (index, entry) in exported_entries.iter().enumerate() {
-        let mut normalized = normalize_lorebook_entry(&lorebook_id, entry, index);
+        let mut normalized = normalize_imported_lorebook_entry(&lorebook_id, entry, index);
         if let Some(old_folder_id) = entry.get("folderId").and_then(Value::as_str) {
             if let Some(object) = normalized.as_object_mut() {
                 object.insert(
@@ -941,9 +1501,22 @@ fn import_marinara_lorebook(state: &AppState, envelope: &Map<String, Value>, dat
     }))
 }
 
-fn import_marinara_preset(state: &AppState, envelope: &Map<String, Value>, data: Value) -> AppResult<Value> {
-    let mut record_value = with_entity_defaults("prompts", data.clone());
-    apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
+fn import_marinara_preset(
+    state: &AppState,
+    envelope: &Map<String, Value>,
+    data: Value,
+) -> AppResult<Value> {
+    let mut preset_data = data.get("preset").cloned().unwrap_or_else(|| data.clone());
+    inherit_wrapper_timestamps(&mut preset_data, &data);
+    remove_import_id(&mut preset_data);
+    remove_fields(
+        &mut preset_data,
+        &["sections", "groups", "choiceBlocks", "variables"],
+    );
+    let mut record_value = with_entity_defaults("prompts", preset_data.clone());
+    let mut timestamp_payload = preset_data.clone();
+    hydrate_metadata_timestamps(&mut timestamp_payload);
+    apply_timestamp_overrides(&mut record_value, &Value::Null, &timestamp_payload);
     let record = state.storage.create("prompts", record_value)?;
     let preset_id = record
         .get("id")
@@ -952,36 +1525,60 @@ fn import_marinara_preset(state: &AppState, envelope: &Map<String, Value>, data:
         .to_string();
 
     let mut group_id_map: HashMap<String, String> = HashMap::new();
-    for group in envelope
-        .get("groups")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-    {
-        let old_id = group.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
+    let mut pending_group_parents: Vec<(String, String)> = Vec::new();
+    for group in array_from_envelope(&data, envelope, "groups") {
+        let old_id = group
+            .get("id")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let old_parent_id = group
+            .get("parentGroupId")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
         let mut group_record = ensure_object(group)?;
         group_record.remove("id");
+        group_record.remove("presetId");
         group_record.insert("presetId".to_string(), Value::String(preset_id.clone()));
+        if old_parent_id.is_some() {
+            group_record.insert("parentGroupId".to_string(), Value::Null);
+        }
         let created = state
             .storage
             .create("prompt-groups", Value::Object(group_record))?;
         if let (Some(old_id), Some(new_id)) = (
             old_id,
-            created.get("id").and_then(Value::as_str).map(ToOwned::to_owned),
+            created
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
         ) {
             group_id_map.insert(old_id, new_id);
+        }
+        if let (Some(new_id), Some(old_parent_id)) = (
+            created
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            old_parent_id,
+        ) {
+            pending_group_parents.push((new_id, old_parent_id));
+        }
+    }
+    for (group_id, old_parent_id) in pending_group_parents {
+        if let Some(new_parent_id) = group_id_map.get(&old_parent_id) {
+            state.storage.patch(
+                "prompt-groups",
+                &group_id,
+                json!({ "parentGroupId": new_parent_id }),
+            )?;
         }
     }
 
     let mut sections_imported = 0usize;
-    for section in envelope
-        .get("sections")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-    {
+    for section in array_from_envelope(&data, envelope, "sections") {
         let mut section_record = ensure_object(section)?;
         section_record.remove("id");
+        section_record.remove("presetId");
         section_record.insert("presetId".to_string(), Value::String(preset_id.clone()));
         if let Some(old_group_id) = section_record.get("groupId").and_then(Value::as_str) {
             if let Some(new_group_id) = group_id_map.get(old_group_id) {
@@ -995,14 +1592,14 @@ fn import_marinara_preset(state: &AppState, envelope: &Map<String, Value>, data:
     }
 
     let mut variables_imported = 0usize;
-    for variable in envelope
-        .get("variables")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-    {
+    let mut variables = array_from_envelope(&data, envelope, "choiceBlocks");
+    if variables.is_empty() {
+        variables = array_from_envelope(&data, envelope, "variables");
+    }
+    for variable in variables {
         let mut variable_record = ensure_object(variable)?;
         variable_record.remove("id");
+        variable_record.remove("presetId");
         variable_record.insert("presetId".to_string(), Value::String(preset_id.clone()));
         state
             .storage
@@ -1033,6 +1630,7 @@ fn import_marinara_envelope(state: &AppState, envelope: Value) -> AppResult<Valu
     }
     let import_type = object.get("type").and_then(Value::as_str).unwrap_or("");
     let mut data = object.get("data").cloned().unwrap_or(Value::Null);
+    hydrate_metadata_timestamps(&mut data);
     if let Some((created_at, updated_at)) = timestamp_overrides_from_value(
         object
             .get("timestampOverrides")
@@ -1065,16 +1663,6 @@ pub(crate) fn import_call(state: &AppState, rest: &[&str], body: Value) -> AppRe
     match rest {
         ["marinara"] => {
             let payload = import_payload(body)?;
-            if let Some(collections) = payload.get("collections").and_then(Value::as_object) {
-                for (collection, rows) in collections {
-                    if BACKUP_COLLECTIONS.contains(&collection.as_str()) {
-                        if let Some(rows) = rows.as_array() {
-                            state.storage.replace_all(collection, rows.clone())?;
-                        }
-                    }
-                }
-                return Ok(json!({ "success": true }));
-            }
             import_marinara_envelope(state, payload)
         }
         ["marinara-package"] => import_marinara_package(state, body),
@@ -1114,10 +1702,6 @@ pub(crate) fn import_call(state: &AppState, rest: &[&str], body: Value) -> AppRe
             let resolved = PathBuf::from(base);
             directory_listing(resolved)
         }
-        ["pick-folder"] => match rfd::FileDialog::new().pick_folder() {
-            Some(path) => directory_listing(path),
-            None => Ok(json!({ "success": false, "cancelled": true })),
-        },
         ["st-bulk", "scan"] => bulk_imports::scan_st_folder(body),
         ["st-bulk", "run"] => bulk_imports::run_st_bulk_import(state, body),
         _ => Err(AppError::new(

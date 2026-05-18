@@ -38,7 +38,10 @@ pub(crate) fn persist_image_upload(
     let target = unique_file_path(&dir.join(&filename))?;
     fs::write(&target, &bytes)?;
     Ok(StoredImageUpload {
-        data_url: format!("data:{mime};base64,{}", general_purpose::STANDARD.encode(bytes)),
+        data_url: format!(
+            "data:{mime};base64,{}",
+            general_purpose::STANDARD.encode(bytes)
+        ),
         absolute_path: target.to_string_lossy().to_string(),
         filename: target
             .file_name()
@@ -57,9 +60,9 @@ pub(crate) fn decode_image_payload(value: &str, field_name: &str) -> AppResult<(
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("image/png")
                 .to_string();
-            let bytes = general_purpose::STANDARD
-                .decode(payload)
-                .map_err(|error| AppError::invalid_input(format!("Invalid {field_name} data: {error}")))?;
+            let bytes = general_purpose::STANDARD.decode(payload).map_err(|error| {
+                AppError::invalid_input(format!("Invalid {field_name} data: {error}"))
+            })?;
             return Ok((mime, bytes));
         }
     }

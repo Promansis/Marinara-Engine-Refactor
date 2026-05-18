@@ -268,7 +268,9 @@ fn normalize_action(value: Option<&Value>) -> Option<&'static str> {
         "rotate" => Some("rotate"),
         "oscillate" => Some("oscillate"),
         "constrict" => Some("constrict"),
-        "position" | "positionwithduration" | "hwpositionwithduration" | "linear" => Some("position"),
+        "position" | "positionwithduration" | "hwpositionwithduration" | "linear" => {
+            Some("position")
+        }
         "stop" => Some("stop"),
         _ => None,
     }

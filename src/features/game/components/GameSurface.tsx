@@ -43,7 +43,7 @@ import {
   useUpdateChat,
   useUpdateChatMetadata,
   useUpdateMessage,
-} from "../../conversation/hooks/use-conversation-data";
+} from "../../chats/hooks/use-chats";
 import { useConnections } from "../../connections/hooks/use-connections";
 import { useGenerate } from "../../generation/hooks/use-generate";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -51,7 +51,7 @@ import { spriteKeys, type SpriteInfo } from "../../characters/hooks/use-characte
 import { api, getJsonRepairRequest, type JsonRepairRequest } from "../../../shared/api/api-client";
 import { gameAssetFileUrlFromPath, userBackgroundUrl } from "../../../shared/api/local-file-api";
 import { showConfirmDialog } from "../../../shared/lib/app-dialogs";
-import { cn, type AvatarCrop, type LegacyAvatarCrop, type AvatarCropValue } from "../../../shared/lib/utils";
+import { cn, type AvatarCrop, type AvatarCropValue } from "../../../shared/lib/utils";
 import { filterLanguageGenerationConnections } from "../../../shared/lib/connection-filters";
 import { audioManager } from "../lib/game-audio";
 import {
@@ -132,7 +132,7 @@ import {
   buildMissingSceneAssetGenerationPayload,
   normalizeSceneAssetNameForGeneration,
 } from "./game-asset-generation-payload";
-import { ChatGalleryDrawer } from "../../conversation/components/ChatGalleryDrawer";
+import { ChatGalleryDrawer } from "../../chats/components/ChatGalleryDrawer";
 import type { ReadableTag } from "../lib/game-tag-parser";
 import type { DirectionCommand, GameNpc } from "@marinara-engine/shared";
 
@@ -930,7 +930,7 @@ const GameCombatUI = lazy(async () => {
 
 import { Modal } from "../../../shared/components/ui/Modal";
 import type { Chat, SessionSummary, Combatant, Message, GameCombatStateSnapshot } from "@marinara-engine/shared";
-import type { CharacterMap, PersonaInfo } from "../../conversation/types/conversation-ui";
+import type { CharacterMap, PersonaInfo } from "../../chats/components/chat-area.types";
 
 /** Typewriter component for the intro screen — reveals text character-by-character. */
 function IntroTypewriter({ text, onComplete }: { text: string; onComplete?: () => void }) {
@@ -1855,9 +1855,8 @@ export function GameSurface({
   const [combatStartMessageId, setCombatStartMessageId] = useState<string | null>(null);
   const [activeDirections, setActiveDirections] = useState<DirectionCommand[]>([]);
   const [partyDialogue, setPartyDialogue] = useState<PartyDialogueLine[]>([]);
-  // Populated only from legacy `[party-chat]` history messages so existing saves
-  // still render party overlay boxes. Never set by a new-turn pipeline — the GM
-  // now voices party members inline via the `[Name] [main] ...` format.
+  // Populated from `[party-chat]` assistant messages so party overlay boxes can
+  // render beside the main narration.
   const [partyChatMessageId, setPartyChatMessageId] = useState<string | null>(null);
   // The active assistant message ID whose typewriter is currently complete, or null if
   // either no message is finished typing or it's the *previous* turn's completion.
@@ -2502,7 +2501,7 @@ export function GameSurface({
       string,
       {
         url: string;
-        crop?: AvatarCrop | LegacyAvatarCrop | null;
+        crop?: AvatarCrop | null;
         nameColor?: string;
         dialogueColor?: string;
       }
@@ -3518,9 +3517,8 @@ export function GameSurface({
       const next = sceneAnalysisState;
       const deferCombatTransition = next === "combat";
       if (deferCombatTransition) {
-        // Combat starts after the narrated turn is fully read; either the
-        // legacy queued encounter or the generated combat JSON effect performs
-        // the transition when it can mount a ready combat UI.
+        // Combat starts after the narrated turn is fully read; the generated
+        // combat JSON effect performs the transition when it can mount a ready combat UI.
       } else {
         // Optimistic local update so the map icon flips immediately
         useGameModeStore.getState().setGameState(next);
@@ -7018,18 +7016,7 @@ export function GameSurface({
     sceneAnalysisEnabled,
   ]);
 
-  // Remap legacy hud_bottom widgets to left/right (hud_bottom was removed)
-  const normalizedWidgets = useMemo(() => {
-    let leftCount = 0;
-    return hudWidgets.map((w) => {
-      if ((w.position as string) === "hud_bottom") {
-        const side = leftCount % 2 === 0 ? "hud_left" : "hud_right";
-        leftCount++;
-        return { ...w, position: side } as typeof w;
-      }
-      return w;
-    });
-  }, [hudWidgets]);
+  const normalizedWidgets = hudWidgets;
 
   const handleStartGameRequest = useCallback(() => {
     if (startGame.isPending || startGameRequested || startGameGuardRef.current) return;

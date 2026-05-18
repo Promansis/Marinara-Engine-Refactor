@@ -2,7 +2,7 @@
 // Hooks: Custom Tools (React Query)
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 
 export interface CustomToolRow {
   id: string;

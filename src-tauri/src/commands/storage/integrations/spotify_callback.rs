@@ -42,13 +42,10 @@ async fn run_callback_listener(
         Ok(()) => (
             "200 OK",
             "Spotify connected",
-            "Spotify is connected. You can close this browser tab and return to Marinara.".to_string(),
+            "Spotify is connected. You can close this browser tab and return to Marinara."
+                .to_string(),
         ),
-        Err(message) => (
-            "400 Bad Request",
-            "Spotify connection failed",
-            message,
-        ),
+        Err(message) => ("400 Bad Request", "Spotify connection failed", message),
     };
     let body = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title></head><body><h1>{}</h1><p>{}</p></body></html>",

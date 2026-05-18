@@ -86,10 +86,6 @@ function createCustomAgentType(name: string): string {
   return `custom-${slug}-${suffix}`;
 }
 
-function isRemovedLocalRuntimeConnectionId(value: string | null | undefined): boolean {
-  return value === "__local_sidecar__" || value === "sidecar:local" || value?.startsWith("sidecar:") === true;
-}
-
 const SPOTIFY_NATIVE_REDIRECT_URI = "http://127.0.0.1:7860/api/spotify/callback";
 
 // Mirrors the native Spotify redirect rule used by the Rust callback listener.
@@ -462,7 +458,7 @@ export function AgentEditor() {
       description: localDescription,
       phase: savedPhase,
       enabled: true,
-      connectionId: isRemovedLocalRuntimeConnectionId(localConnectionId) ? null : localConnectionId || null,
+      connectionId: localConnectionId || null,
       promptTemplate: localPrompt,
       settings: {
         ...preservedSpotifyFields,
@@ -812,9 +808,7 @@ export function AgentEditor() {
               ))}
             </select>
             <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              {isRemovedLocalRuntimeConnectionId(localConnectionId)
-                ? "This agent was using a deferred local model option. Choose a configured connection before saving."
-                : "When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active connection."}
+              When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active connection.
             </p>
           </FieldGroup>
 

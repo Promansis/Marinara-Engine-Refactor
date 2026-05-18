@@ -27,14 +27,14 @@ import {
   useUpdateChatMetadata,
   useBranchChat,
   useChats,
-} from "../../conversation/hooks/use-conversation-data";
+} from "../../chats/hooks/use-chats";
 
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { useGenerate } from "../../generation/hooks/use-generate";
 import { useCharacters, usePersonas } from "../../characters/hooks/use-characters";
 import { useConnections } from "../../connections/hooks/use-connections";
 import { usePageActivity } from "../../../shared/hooks/use-page-activity";
-import { ApiError } from "../../../shared/lib/api-client";
+import { ApiError } from "../../../shared/api/api-client";
 import { filterLanguageGenerationConnections } from "../../../shared/lib/connection-filters";
 import { getChatDisplayName, getConnectedChatDisplayName, parseChatMetadata } from "../../../shared/lib/chat-display";
 import { parseCharacterDisplayData } from "../../../shared/lib/character-display";
@@ -64,7 +64,7 @@ import { useTTSConfig } from "../../../shared/hooks/use-tts";
 import { buildTTSMessageText, resolveTTSVoiceForSpeaker } from "../../../shared/lib/tts-dialogue";
 import { mirrorSpritePlacements, normalizeSpritePlacements } from "../../visuals/components/sprite-placement";
 import { normalizeSpriteDisplayModes } from "../../visuals/components/sprite-display-modes";
-import type { CharacterMap, MessageSelectionToggle, MessageWithSwipes, PeekPromptData } from "../../conversation/types/conversation-ui";
+import type { CharacterMap, MessageSelectionToggle, MessageWithSwipes, PeekPromptData } from "../../chats/components/chat-area.types";
 import { RecentChats } from "../../chats/components/RecentChats";
 import { HomeFaq } from "../../chats/components/HomeFaq";
 import { NewChatConnectionGate } from "../../chats/components/NewChatConnectionGate";

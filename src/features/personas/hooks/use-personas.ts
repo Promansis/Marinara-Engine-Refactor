@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api/personas-api";
+import { api } from "../../../shared/api/api-client";
 
 export const personaKeys = {
   list: ["personas"] as const,

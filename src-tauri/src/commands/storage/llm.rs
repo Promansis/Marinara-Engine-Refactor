@@ -105,14 +105,22 @@ pub(crate) async fn llm_stream_events(state: &AppState, body: Value) -> AppResul
 pub(crate) async fn llm_models(state: &AppState, connection_id: Option<&str>) -> AppResult<Value> {
     let connection = connection_id
         .and_then(|id| state.storage.get("connections", id).ok().flatten())
-        .or_else(|| state.storage.list("connections").ok().and_then(|rows| rows.into_iter().next()));
+        .or_else(|| {
+            state
+                .storage
+                .list("connections")
+                .ok()
+                .and_then(|rows| rows.into_iter().next())
+        });
     let provider = connection
         .as_ref()
         .and_then(|value| value.get("provider"))
         .and_then(Value::as_str)
         .unwrap_or("openai");
     let mut models = match connection.as_ref() {
-        Some(connection) => fetch_provider_models(connection).await.unwrap_or_else(|_| provider_model_catalog(provider)),
+        Some(connection) => fetch_provider_models(connection)
+            .await
+            .unwrap_or_else(|_| provider_model_catalog(provider)),
         None => provider_model_catalog(provider),
     };
     if let Some(connection) = connection.as_ref() {
@@ -199,11 +207,7 @@ fn provider_model_catalog(provider: &str) -> Vec<Value> {
             "claude-3-5-haiku-latest",
             "claude-3-opus-latest",
         ],
-        "google" | "google_vertex" => &[
-            "gemini-1.5-pro",
-            "gemini-1.5-flash",
-            "text-embedding-004",
-        ],
+        "google" | "google_vertex" => &["gemini-1.5-pro", "gemini-1.5-flash", "text-embedding-004"],
         "openrouter" => &[
             "openai/gpt-4o-mini",
             "anthropic/claude-3.5-sonnet",
@@ -211,7 +215,12 @@ fn provider_model_catalog(provider: &str) -> Vec<Value> {
         ],
         "ollama" => &["llama3.1", "mistral", "nomic-embed-text"],
         "xai" => &["grok-2-latest", "grok-2-mini-latest"],
-        _ => &["gpt-4o", "gpt-4o-mini", "text-embedding-3-small", "text-embedding-3-large"],
+        _ => &[
+            "gpt-4o",
+            "gpt-4o-mini",
+            "text-embedding-3-small",
+            "text-embedding-3-large",
+        ],
     };
     ids.iter()
         .map(|id| json!({ "id": id, "name": id, "provider": provider }))
@@ -279,7 +288,10 @@ async fn fetch_provider_models(connection: &Value) -> AppResult<Vec<Value>> {
     if !status.is_success() {
         return Err(AppError::new(
             "models_provider_error",
-            format!("Provider returned HTTP {status}: {}", sanitize_provider_body(&text)),
+            format!(
+                "Provider returned HTTP {status}: {}",
+                sanitize_provider_body(&text)
+            ),
         ));
     }
     let json = serde_json::from_str::<Value>(&text)
@@ -327,68 +339,87 @@ async fn fetch_image_models(connection: &Value) -> AppResult<Vec<Value>> {
         return Ok(provider_model_catalog("image_generation"));
     }
     match source.as_str() {
-        "comfyui" => fetch_json_models(
-            &format!("{base}/object_info/CheckpointLoaderSimple"),
-            connection,
-            "image_generation",
-            |json| {
-                json.get("CheckpointLoaderSimple")
-                    .and_then(|value| value.get("input"))
-                    .and_then(|value| value.get("required"))
-                    .and_then(|value| value.get("ckpt_name"))
-                    .and_then(Value::as_array)
-                    .and_then(|items| items.first())
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                    .map(|id| json!({ "id": id, "name": id, "provider": "image_generation" }))
-                    .collect()
-            },
-        )
-        .await,
-        "automatic1111" | "drawthings" => fetch_json_models(
-            &format!("{base}/sdapi/v1/sd-models"),
-            connection,
-            "image_generation",
-            |json| {
+        "comfyui" => {
+            fetch_json_models(
+                &format!("{base}/object_info/CheckpointLoaderSimple"),
+                connection,
+                "image_generation",
+                |json| {
+                    json.get("CheckpointLoaderSimple")
+                        .and_then(|value| value.get("input"))
+                        .and_then(|value| value.get("required"))
+                        .and_then(|value| value.get("ckpt_name"))
+                        .and_then(Value::as_array)
+                        .and_then(|items| items.first())
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(|id| json!({ "id": id, "name": id, "provider": "image_generation" }))
+                        .collect()
+                },
+            )
+            .await
+        }
+        "automatic1111" | "drawthings" => {
+            fetch_json_models(
+                &format!("{base}/sdapi/v1/sd-models"),
+                connection,
+                "image_generation",
+                |json| {
+                    json.as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|model| {
+                            model
+                                .get("title")
+                                .or_else(|| model.get("model_name"))
+                                .and_then(Value::as_str)
+                        })
+                        .map(|id| json!({ "id": id, "name": id, "provider": "image_generation" }))
+                        .collect()
+                },
+            )
+            .await
+        }
+        "horde" => {
+            let url = format!(
+                "{}/api/v2/status/models?type=image",
+                base.trim_end_matches('/')
+            );
+            fetch_json_models(&url, connection, "image_generation", |json| {
                 json.as_array()
                     .into_iter()
                     .flatten()
                     .filter_map(|model| {
                         model
-                            .get("title")
-                            .or_else(|| model.get("model_name"))
+                            .get("name")
+                            .or_else(|| model.get("id"))
                             .and_then(Value::as_str)
                     })
-                    .map(|id| json!({ "id": id, "name": id, "provider": "image_generation" }))
-                    .collect()
-            },
-        )
-        .await,
-        "horde" => {
-            let url = format!("{}/api/v2/status/models?type=image", base.trim_end_matches('/'));
-            fetch_json_models(&url, connection, "image_generation", |json| {
-                json.as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|model| model.get("name").or_else(|| model.get("id")).and_then(Value::as_str))
                     .map(|id| json!({ "id": id, "name": id, "provider": "image_generation" }))
                     .collect()
             })
             .await
         }
-        "nanogpt" => fetch_json_models(&format!("{base}/image-models"), connection, "image_generation", |json| {
-            normalize_openai_data_models(json, "image_generation")
-        })
-        .await,
-        "openrouter" => fetch_json_models(
-            &format!("{base}/models?output_modalities=image"),
-            connection,
-            "image_generation",
-            |json| normalize_openai_data_models(json, "image_generation"),
-        )
-        .await,
+        "nanogpt" => {
+            fetch_json_models(
+                &format!("{base}/image-models"),
+                connection,
+                "image_generation",
+                |json| normalize_openai_data_models(json, "image_generation"),
+            )
+            .await
+        }
+        "openrouter" => {
+            fetch_json_models(
+                &format!("{base}/models?output_modalities=image"),
+                connection,
+                "image_generation",
+                |json| normalize_openai_data_models(json, "image_generation"),
+            )
+            .await
+        }
         _ => Ok(provider_model_catalog("image_generation")),
     }
 }
@@ -428,7 +459,10 @@ where
     if !status.is_success() {
         return Err(AppError::new(
             "models_provider_error",
-            format!("{provider} returned HTTP {status}: {}", sanitize_provider_body(&text)),
+            format!(
+                "{provider} returned HTTP {status}: {}",
+                sanitize_provider_body(&text)
+            ),
         ));
     }
     let json = serde_json::from_str::<Value>(&text)
@@ -538,11 +572,20 @@ fn model_endpoint(provider: &str, base: &str, connection: &Value) -> String {
     match provider {
         "anthropic" => format!("{base}/v1/models"),
         "google" if base.ends_with("/v1beta") || base.ends_with("/v1") => {
-            format!("{base}/models?key={}", connection.get("apiKey").and_then(Value::as_str).unwrap_or(""))
+            format!(
+                "{base}/models?key={}",
+                connection
+                    .get("apiKey")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            )
         }
         "google" => format!(
             "{base}/v1beta/models?key={}",
-            connection.get("apiKey").and_then(Value::as_str).unwrap_or("")
+            connection
+                .get("apiKey")
+                .and_then(Value::as_str)
+                .unwrap_or("")
         ),
         "google_vertex" => format!("{base}/models"),
         _ => format!("{base}/models"),

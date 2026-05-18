@@ -10,22 +10,24 @@ pub(crate) fn chat_presets_call(
     match (method, rest) {
         ("GET", []) => list_collection(state, "chat-presets", None),
         ("POST", []) => state.storage.create("chat-presets", body),
-        ("GET", ["active", mode]) => {
-            Ok(state
-                .storage
-                .list("chat-presets")?
-                .into_iter()
-                .find(|preset| {
-                    preset.get("mode").and_then(Value::as_str) == Some(*mode)
-                        && preset
-                            .get("isActive")
-                            .or_else(|| preset.get("active"))
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                })
-                .or_else(|| find_by_field(state, "chat-presets", "mode", mode).ok().flatten())
-                .unwrap_or(Value::Null))
-        }
+        ("GET", ["active", mode]) => Ok(state
+            .storage
+            .list("chat-presets")?
+            .into_iter()
+            .find(|preset| {
+                preset.get("mode").and_then(Value::as_str) == Some(*mode)
+                    && preset
+                        .get("isActive")
+                        .or_else(|| preset.get("active"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+            })
+            .or_else(|| {
+                find_by_field(state, "chat-presets", "mode", mode)
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or(Value::Null)),
         ("POST", ["import"]) => state.storage.create("chat-presets", body),
         ("POST", [id, "duplicate"]) => duplicate_record(state, "chat-presets", id),
         ("POST", [id, "set-active"]) => {

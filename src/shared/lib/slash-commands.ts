@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Slash Commands — SillyTavern-style / commands
 // ──────────────────────────────────────────────
-import { api } from "./api-client";
+import { api } from "../api/api-client";
 import { chatBackgroundMetadataToUrl } from "./backgrounds";
 import { planRoleplayScene, createRoleplayScene } from "../../engine/modes/roleplay/scene";
 import { llmApi } from "../api/llm-api";

@@ -12,7 +12,7 @@ import type { EchoChamberSide } from "../../../shared/stores/ui.store";
 import { useAgentConfigs } from "../../agents/hooks/use-agents";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { useChat } from "../../chats/hooks/use-chats";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { cn } from "../../../shared/lib/utils";
 
 const MESSAGE_INTERVAL_MS = 30_000; // 30 s between reveals

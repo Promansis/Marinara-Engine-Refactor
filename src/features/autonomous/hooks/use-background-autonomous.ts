@@ -18,7 +18,7 @@ import {
 } from "../../../engine/modes/chat";
 import { llmApi } from "../../../shared/api/llm-api";
 import { storageApi } from "../../../shared/api/storage-api";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { useUIStore } from "../../../shared/stores/ui.store";
 import { playNotificationPing } from "../../../shared/lib/notification-sound";

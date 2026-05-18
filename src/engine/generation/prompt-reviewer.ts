@@ -80,23 +80,55 @@ export async function* reviewPromptPreset(
 }
 
 async function assemblePromptReviewView(storage: StorageGateway, presetId: string): Promise<string> {
-  const sections = await storage.list<JsonRecord>("prompt-sections", { filters: { presetId } });
+  const full = await storage.request<JsonRecord>("GET", `/prompts/${encodeURIComponent(presetId)}/full`).catch(() => null);
+  const preset = full && isRecord(full.preset) ? full.preset : {};
+  const groups = Array.isArray(full?.groups) ? full.groups.filter(isRecord) : [];
+  const choiceBlocks = Array.isArray(full?.choiceBlocks) ? full.choiceBlocks.filter(isRecord) : [];
+  const sections = Array.isArray(full?.sections)
+    ? full.sections.filter(isRecord)
+    : await storage.list<JsonRecord>("prompt-sections", { filters: { presetId } });
+  const explicitOrder = stringArray(preset.sectionOrder);
+  const orderIndex = new Map(explicitOrder.map((id, index) => [id, index]));
   const enabledSections = sections
     .filter((section) => section.enabled !== false)
-    .sort((a, b) => orderValue(a) - orderValue(b));
+    .sort((a, b) => {
+      const aIndex = orderIndex.get(stringValue(a.id));
+      const bIndex = orderIndex.get(stringValue(b.id));
+      if (aIndex != null || bIndex != null) return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
+      return orderValue(a) - orderValue(b);
+    });
 
   if (enabledSections.length === 0) {
     return "(Preset has no enabled sections.)";
   }
 
-  return enabledSections
+  const groupById = new Map(groups.map((group) => [stringValue(group.id), group]));
+  const variableBlock = choiceBlocks.length
+    ? [
+        "[Preset Variables]",
+        ...choiceBlocks.map((block) => {
+          const label = stringValue(block.label) || stringValue(block.name) || stringValue(block.variableName) || "Variable";
+          const options = Array.isArray(block.options)
+            ? block.options
+                .map((option) => (isRecord(option) ? stringValue(option.label) || stringValue(option.value) : stringValue(option)))
+                .filter(Boolean)
+                .join(", ")
+            : "";
+          return `- ${label}${options ? `: ${options}` : ""}`;
+        }),
+      ].join("\n")
+    : "";
+  const sectionBlock = enabledSections
     .map((section, index) => {
       const name = stringValue(section.name) || stringValue(section.identifier) || "Untitled Section";
       const role = (stringValue(section.role) || "system").toUpperCase();
       const content = stringValue(section.content);
-      return `[Message ${index + 1} | ${role} | ${name}]\n${content.trim() ? content : "(empty)"}`;
+      const group = groupById.get(stringValue(section.groupId));
+      const groupLabel = group ? ` | Group: ${stringValue(group.name) || stringValue(group.label) || stringValue(group.id)}` : "";
+      return `[Message ${index + 1} | ${role} | ${name}${groupLabel}]\n${content.trim() ? content : "(empty)"}`;
     })
     .join("\n\n---\n\n");
+  return variableBlock ? `${variableBlock}\n\n---\n\n${sectionBlock}` : sectionBlock;
 }
 
 function orderValue(section: JsonRecord): number {
@@ -106,4 +138,20 @@ function orderValue(section: JsonRecord): number {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+  if (typeof value === "string") {
+    try {
+      return stringArray(JSON.parse(value));
+    } catch {
+      return value.trim() ? [value] : [];
+    }
+  }
+  return [];
 }

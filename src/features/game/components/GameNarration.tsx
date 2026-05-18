@@ -33,7 +33,7 @@ import {
   Wand2,
   RotateCcw,
 } from "lucide-react";
-import { cn, copyToClipboard, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../../shared/lib/utils";
+import { cn, copyToClipboard, getAvatarCropStyle, type AvatarCrop } from "../../../shared/lib/utils";
 import { findNamedMapValue } from "../lib/game-character-name-match";
 import type { GameSegmentEdit } from "../lib/game-segment-edits";
 import { parseGmTags, stripGmTagsKeepReadables } from "../lib/game-tag-parser";
@@ -56,7 +56,7 @@ import { ttsService } from "../../../shared/lib/tts-service";
 import { getOrCreateCachedTTSAudioBlob } from "../../../shared/lib/tts-audio-cache";
 import { resolveTTSVoiceForSpeaker, splitTTSChunks, ttsConfigMatchesSpeaker } from "../../../shared/lib/tts-dialogue";
 import type { PartyDialogueLine, Message, TTSConfig, GameNpc, SkillCheckResult } from "@marinara-engine/shared";
-import type { CharacterMap, PersonaInfo } from "../../conversation/types/conversation-ui";
+import type { CharacterMap, PersonaInfo } from "../../chats/components/chat-area.types";
 
 export { formatNarration } from "../lib/game-narration-format";
 
@@ -250,7 +250,7 @@ function narrationSegmentAnchorKey(segment: NarrationSegment): string {
 
 type SpeakerAvatarInfo = {
   url: string;
-  crop?: AvatarCrop | LegacyAvatarCrop | null;
+  crop?: AvatarCrop | null;
   nameColor?: string;
   dialogueColor?: string;
 };
@@ -4712,7 +4712,7 @@ function CroppedAvatar({
 }: {
   src: string;
   alt: string;
-  crop?: AvatarCrop | LegacyAvatarCrop | null;
+  crop?: AvatarCrop | null;
   className?: string;
   onLoadError?: () => void;
 }) {
@@ -5140,7 +5140,7 @@ function parseNarrationSegments(message: NarrationMessage, speakerColors: Map<st
       const expression = partyMatch[4]?.trim() || undefined;
       let content = partyMatch[5]!.trim();
 
-      // Normalize legacy `extra` → `side` so historical messages render with the single popup style.
+      // Normalize `extra` to the current `side` display lane.
       if (rawType === "extra") rawType = "side";
 
       // Strip surrounding dialogue quotes for spoken dialogue types

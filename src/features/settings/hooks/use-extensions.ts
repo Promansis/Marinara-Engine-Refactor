@@ -2,7 +2,7 @@
 // Hooks: Installed Extensions
 // ──────────────────────────────────────────────
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import type { CreateExtensionInput, InstalledExtension, UpdateExtensionInput } from "@marinara-engine/shared";
 
 export const extensionKeys = {

@@ -22,7 +22,9 @@ pub(crate) async fn execute_custom_tool(state: &AppState, body: Value) -> AppRes
             row.get("name").and_then(Value::as_str) == Some(tool_name)
                 && string_bool(row.get("enabled")).unwrap_or(true)
         })
-        .ok_or_else(|| AppError::invalid_input(format!("Custom tool not found or disabled: {tool_name}")))?;
+        .ok_or_else(|| {
+            AppError::invalid_input(format!("Custom tool not found or disabled: {tool_name}"))
+        })?;
 
     match tool
         .get("executionType")
@@ -61,7 +63,11 @@ async fn execute_webhook_tool(tool: &Value, tool_name: &str, arguments: Value) -
         .get("webhookUrl")
         .and_then(Value::as_str)
         .filter(|url| !url.trim().is_empty())
-        .ok_or_else(|| AppError::invalid_input(format!("Webhook URL is missing for custom tool: {tool_name}")))?;
+        .ok_or_else(|| {
+            AppError::invalid_input(format!(
+                "Webhook URL is missing for custom tool: {tool_name}"
+            ))
+        })?;
     if !is_allowed_outbound_url(url, true) {
         return Err(AppError::invalid_input(format!(
             "Custom tool webhook URL is not allowed: {url}"

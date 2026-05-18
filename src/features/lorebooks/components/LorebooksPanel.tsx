@@ -32,7 +32,7 @@ import { useCharacters, usePersonas } from "../../characters/hooks/use-character
 import type { Lorebook, LorebookCategory } from "@marinara-engine/shared";
 import { showConfirmDialog } from "../../../shared/lib/app-dialogs";
 import { cn } from "../../../shared/lib/utils";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { getChatCharacterIds } from "../../../shared/lib/chat-macros";
 import { ExportFormatDialog, type ExportFormatChoice } from "../../../shared/components/ui/ExportFormatDialog";
 import { resolveManagedLocalAssetUrl } from "../../../shared/api/local-file-api";

@@ -71,7 +71,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../../shared/lib/utils";
 import { HelpTooltip } from "../../../shared/components/ui/HelpTooltip";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import type { Lorebook, LorebookEntry, LorebookFolder, LorebookCategory } from "@marinara-engine/shared";
 import { testPrimaryKeys, testSecondaryKeys } from "@marinara-engine/shared";
 import { LorebookEntryRow } from "./LorebookEntryRow";

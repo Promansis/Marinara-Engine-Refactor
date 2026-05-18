@@ -100,7 +100,10 @@ pub(crate) fn knowledge_sources_call(
         }
         _ => Err(AppError::new(
             "route_not_found",
-            format!("Unknown knowledge-sources route: {method} /{}", rest.join("/")),
+            format!(
+                "Unknown knowledge-sources route: {method} /{}",
+                rest.join("/")
+            ),
         )),
     }
 }

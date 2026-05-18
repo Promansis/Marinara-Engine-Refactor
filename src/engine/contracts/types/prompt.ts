@@ -52,7 +52,7 @@ export interface PromptPreset {
   sectionOrder: string[];
   /** Ordered list of group IDs */
   groupOrder: string[];
-  /** Variable toggle groups (for legacy / simple vars) */
+  /** Variable toggle groups for simple vars. */
   variableGroups: PromptVariableGroup[];
   /** Current values for all variables */
   variableValues: Record<string, string>;

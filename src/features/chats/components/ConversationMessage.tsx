@@ -24,7 +24,7 @@ import { applyInlineMarkdown, renderMarkdownBlocks } from "../../../shared/lib/m
 import { chatKeys } from "../../chats/hooks/use-chats";
 import { resolveMessageMacros } from "../../../shared/lib/chat-macros";
 import { useTranslate } from "../../../shared/hooks/use-translate";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
 import { GenerationReplayDetailsModal, hasGenerationReplayDetails } from "./GenerationReplayDetailsModal";
 import { ImagePromptPanel } from "./ImagePromptPanel";

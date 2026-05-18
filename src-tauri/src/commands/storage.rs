@@ -7,14 +7,14 @@ use std::fs;
 use std::time::Duration;
 use tauri::State;
 
-mod agents;
 mod admin;
+mod agents;
 mod avatars;
 mod backgrounds;
 mod backup;
 mod bot_browser;
-mod chat_presets;
 mod characters;
+mod chat_presets;
 mod chats;
 mod custom_tools;
 mod exports;

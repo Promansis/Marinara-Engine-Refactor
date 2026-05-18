@@ -173,13 +173,7 @@ pub(crate) async fn game_spotify_play(
     let body = Value::Null;
     let credentials = resolve_credentials(state, &route, &body).await?;
     let path = spotify_control_path("/me/player/play", device_id);
-    let response = spotify_api(
-        &credentials,
-        &path,
-        "PUT",
-        Some(json!({ "uris": [uri] })),
-    )
-    .await?;
+    let response = spotify_api(&credentials, &path, "PUT", Some(json!({ "uris": [uri] }))).await?;
     if !(200..300).contains(&response.status) && response.status != 204 {
         return Err(AppError::with_details(
             "spotify_api_error",
@@ -221,13 +215,11 @@ fn authorize(state: &AppState, route: &ParsedPath, body: &Value) -> AppResult<Va
         ("redirect_uri", SPOTIFY_REDIRECT_URI),
         ("state", &auth_state),
     ]);
-    Ok(
-        json!({
-            "authUrl": format!("https://accounts.spotify.com/authorize?{params}"),
-            "redirectUri": SPOTIFY_REDIRECT_URI,
-            "callbackListenerStarted": callback_listener_started
-        }),
-    )
+    Ok(json!({
+        "authUrl": format!("https://accounts.spotify.com/authorize?{params}"),
+        "redirectUri": SPOTIFY_REDIRECT_URI,
+        "callbackListenerStarted": callback_listener_started
+    }))
 }
 
 pub(super) async fn exchange(state: &AppState, body: Value) -> AppResult<Value> {

@@ -148,6 +148,18 @@ export async function getConversationBusyDelay(
   };
 }
 
+export async function checkConversationCharacterExchange(
+  storage: StorageGateway,
+  input: { chatId: string; lastSpeakerCharId: string },
+): Promise<AutonomousCheckResult> {
+  const chat = await requireChat(storage, input.chatId);
+  const meta = metadataRecord(chat.metadata);
+  if (meta.characterExchanges !== true) {
+    return { shouldTrigger: false, characterIds: [], reason: "disabled", inactivityMs: 0 };
+  }
+  return checkCharacterExchange(input.chatId, input.lastSpeakerCharId, characterSchedules(meta));
+}
+
 export type AutonomousClientPresenceStatus = "active" | "idle" | "dnd";
 
 /** Auto-reset generationInProgress after this many ms (5 minutes) */

@@ -1,6 +1,7 @@
 use super::shared::*;
 use super::*;
 use std::io::{Cursor, Write};
+use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 
 pub(crate) fn export_record(
@@ -12,14 +13,9 @@ pub(crate) fn export_record(
 ) -> AppResult<Value> {
     let record = get_required(state, collection, id)?;
     if format == Some("compatible") {
-        return Ok(compatible_record(collection, record));
+        return compatible_record(collection, &record);
     }
-    Ok(json!({
-        "type": kind,
-        "version": 1,
-        "exportedAt": now_iso(),
-        "data": record
-    }))
+    native_record_export(state, kind, collection, &record)
 }
 
 pub(crate) fn export_records(
@@ -30,11 +26,15 @@ pub(crate) fn export_records(
 ) -> AppResult<Value> {
     let ids = string_array_from_value(body.get("ids"));
     let format = body.get("format").and_then(Value::as_str);
+    if matches!(collection, "characters" | "personas" | "prompts") {
+        return export_named_records(state, kind, collection, ids, format);
+    }
+
     let mut items = Vec::new();
     for id in ids {
         if let Some(record) = state.storage.get(collection, &id)? {
             items.push(if format == Some("compatible") {
-                compatible_record(collection, record)
+                compatible_record(collection, &record)?
             } else {
                 record
             });
@@ -53,17 +53,7 @@ pub(crate) fn export_records(
     )?;
     for item in &items {
         let id = item.get("id").and_then(Value::as_str).unwrap_or("record");
-        let parsed_data_name = item
-            .get("data")
-            .and_then(Value::as_str)
-            .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-            .and_then(|data| data.get("name").and_then(Value::as_str).map(ToOwned::to_owned));
-        let name = item
-            .get("name")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .or(parsed_data_name)
-            .unwrap_or_else(|| id.to_string());
+        let name = item_export_name(collection, item).unwrap_or_else(|| id.to_string());
         zip.add_json(
             &format!(
                 "{}/{}-{}.json",
@@ -83,18 +73,16 @@ pub(crate) fn export_records(
 
 pub(crate) fn export_character_png(state: &AppState, id: &str) -> AppResult<Value> {
     let character = get_required(state, "characters", id)?;
-    let card = json!({
-        "spec": "chara_card_v2",
-        "spec_version": "2.0",
-        "data": character_data_value(&character)
-    });
+    let card = compatible_character_export(&character);
     let name = card
         .get("data")
         .and_then(|data| data.get("name"))
         .and_then(Value::as_str)
         .unwrap_or("character");
+    let avatar_png =
+        avatar_data_url(state, &character).and_then(|value| png_data_url_bytes(&value));
     Ok(binary_download(
-        character_card_png(&card)?,
+        character_card_png(&card, avatar_png.as_deref())?,
         "image/png",
         &format!("{}.png", safe_export_name(name, "character")),
     ))
@@ -163,15 +151,8 @@ pub(crate) fn import_character_embedded_lorebook(
 }
 
 pub(crate) fn export_prompt(state: &AppState, preset_id: &str) -> AppResult<Value> {
-    Ok(json!({
-        "type": "marinara_preset",
-        "version": 1,
-        "exportedAt": now_iso(),
-        "data": get_required(state, "prompts", preset_id)?,
-        "groups": list_collection(state, "prompt-groups", Some(("presetId", preset_id)))?,
-        "sections": list_collection(state, "prompt-sections", Some(("presetId", preset_id)))?,
-        "variables": list_collection(state, "prompt-variables", Some(("presetId", preset_id)))?
-    }))
+    let preset = get_required(state, "prompts", preset_id)?;
+    preset_export_envelope(state, &preset)
 }
 
 pub(crate) fn preview_prompt(state: &AppState, preset_id: &str, body: Value) -> AppResult<Value> {
@@ -214,73 +195,290 @@ pub(crate) fn export_lorebook(
     let lorebook = get_required(state, "lorebooks", lorebook_id)?;
     let entries = list_collection(state, "lorebook-entries", Some(("lorebookId", lorebook_id)))?;
     if format == Some("compatible") {
-        return Ok(json!({
-            "name": lorebook.get("name").cloned().unwrap_or_else(|| json!("Lorebook")),
-            "description": lorebook.get("description").cloned().unwrap_or(Value::Null),
-            "entries": entries
-        }));
+        return Ok(compatible_lorebook_export(&lorebook, &entries));
     }
     Ok(json!({
         "type": "marinara_lorebook",
         "version": 1,
         "exportedAt": now_iso(),
-        "data": lorebook,
-        "entries": entries,
-        "folders": list_collection(state, "lorebook-folders", Some(("lorebookId", lorebook_id)))?
+        "data": {
+            "lorebook": lorebook,
+            "entries": entries,
+            "folders": list_collection(state, "lorebook-folders", Some(("lorebookId", lorebook_id)))?
+        }
     }))
 }
 
 pub(crate) fn export_lorebooks(state: &AppState, body: Value) -> AppResult<Value> {
     let ids = string_array_from_value(body.get("ids"));
     let format = body.get("format").and_then(Value::as_str);
-    let mut items = Vec::new();
-    for id in ids {
-        items.push(export_lorebook(state, &id, format)?);
-    }
     let mut zip = ExportZip::new();
-    zip.add_json(
-        "manifest.json",
-        &json!({
-            "type": "marinara_lorebooks",
-            "version": 1,
-            "exportedAt": now_iso(),
-            "count": items.len()
-        }),
-    )?;
-    for item in &items {
-        let name = item
-            .get("data")
-            .and_then(|data| data.get("name"))
+    let mut exported_count = 0usize;
+    for id in ids {
+        let Some(lorebook) = state.storage.get("lorebooks", &id)? else {
+            continue;
+        };
+        let item = export_lorebook(state, &id, format)?;
+        let name = lorebook
+            .get("name")
             .and_then(Value::as_str)
-            .or_else(|| item.get("name").and_then(Value::as_str))
             .unwrap_or("lorebook");
-        let id = item
-            .get("data")
-            .and_then(|data| data.get("id"))
-            .and_then(Value::as_str)
-            .or_else(|| item.get("id").and_then(Value::as_str))
-            .unwrap_or("lorebook");
+        let fallback = format!("lorebook-{}", exported_count + 1);
         zip.add_json(
             &format!(
-                "lorebooks/{}-{}.json",
-                safe_export_name(name, "lorebook"),
-                safe_export_name(id, "id")
+                "{}.{}",
+                safe_export_name(name, &fallback),
+                if format == Some("compatible") {
+                    "json"
+                } else {
+                    "marinara.json"
+                }
             ),
-            item,
+            &item,
         )?;
+        exported_count += 1;
     }
     Ok(binary_download(
         zip.finish()?,
         "application/zip",
-        "marinara_lorebooks.zip",
+        if format == Some("compatible") {
+            "compatible-lorebooks.zip"
+        } else {
+            "marinara-lorebooks.zip"
+        },
     ))
 }
 
-fn compatible_record(collection: &str, record: Value) -> Value {
-    if collection == "characters" {
-        return character_data_value(&record);
+fn native_record_export(
+    state: &AppState,
+    kind: &str,
+    collection: &str,
+    record: &Value,
+) -> AppResult<Value> {
+    match collection {
+        "characters" => character_export_envelope(state, record),
+        "personas" => persona_export_envelope(state, record),
+        "prompts" => preset_export_envelope(state, record),
+        _ => Ok(json!({
+            "type": kind,
+            "version": 1,
+            "exportedAt": now_iso(),
+            "data": record
+        })),
     }
-    record
+}
+
+fn export_named_records(
+    state: &AppState,
+    kind: &str,
+    collection: &str,
+    ids: Vec<String>,
+    format: Option<&str>,
+) -> AppResult<Value> {
+    let compatible = format == Some("compatible") && collection != "prompts";
+    let mut zip = ExportZip::new();
+    let mut exported_count = 0usize;
+    for id in ids {
+        let Some(record) = state.storage.get(collection, &id)? else {
+            continue;
+        };
+        let item = if compatible {
+            compatible_record(collection, &record)?
+        } else {
+            native_record_export(state, kind, collection, &record)?
+        };
+        let fallback = format!(
+            "{}-{}",
+            singular_export_name(collection),
+            exported_count + 1
+        );
+        let name = item_export_name(collection, &record).unwrap_or_else(|| fallback.clone());
+        zip.add_json(
+            &format!(
+                "{}.{}",
+                safe_export_name(&name, &fallback),
+                if compatible { "json" } else { "marinara.json" }
+            ),
+            &item,
+        )?;
+        exported_count += 1;
+    }
+    Ok(binary_download(
+        zip.finish()?,
+        "application/zip",
+        named_zip_filename(collection, compatible),
+    ))
+}
+
+fn compatible_record(collection: &str, record: &Value) -> AppResult<Value> {
+    Ok(match collection {
+        "characters" => compatible_character_export(record),
+        "personas" => compatible_persona_export(record),
+        _ => record.clone(),
+    })
+}
+
+fn character_export_envelope(state: &AppState, character: &Value) -> AppResult<Value> {
+    let id = record_id(character, "character")?;
+    let data = character_data_value(character);
+    let mut exported = Map::new();
+    exported.insert(
+        "spec".to_string(),
+        Value::String("chara_card_v2".to_string()),
+    );
+    exported.insert("spec_version".to_string(), Value::String("2.0".to_string()));
+    exported.insert("data".to_string(), data);
+    if let Some(avatar) = avatar_data_url(state, character) {
+        exported.insert("avatar".to_string(), Value::String(avatar));
+    }
+    let sprites = sprites_for_id(state, id)?;
+    if !sprites.is_empty() {
+        exported.insert("sprites".to_string(), Value::Array(sprites));
+    }
+    let gallery = gallery_for_character(state, id)?;
+    if !gallery.is_empty() {
+        exported.insert("gallery".to_string(), Value::Array(gallery));
+    }
+    exported.insert(
+        "metadata".to_string(),
+        json!({
+            "createdAt": character.get("createdAt").cloned().unwrap_or(Value::Null),
+            "updatedAt": character.get("updatedAt").cloned().unwrap_or(Value::Null),
+            "comment": character.get("comment").cloned().unwrap_or_else(|| json!(""))
+        }),
+    );
+    Ok(json!({
+        "type": "marinara_character",
+        "version": 1,
+        "exportedAt": now_iso(),
+        "data": Value::Object(exported)
+    }))
+}
+
+fn compatible_character_export(character: &Value) -> Value {
+    json!({
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "data": character_data_value(character)
+    })
+}
+
+fn persona_export_envelope(state: &AppState, persona: &Value) -> AppResult<Value> {
+    let id = record_id(persona, "persona").unwrap_or("");
+    let mut data = persona_data_object(persona);
+    if let Some(avatar) = avatar_data_url(state, persona) {
+        data.insert("avatar".to_string(), Value::String(avatar));
+    }
+    if !id.is_empty() {
+        let sprites = sprites_for_id(state, id)?;
+        if !sprites.is_empty() {
+            data.insert("sprites".to_string(), Value::Array(sprites));
+        }
+    }
+    data.insert(
+        "metadata".to_string(),
+        json!({
+            "createdAt": persona.get("createdAt").cloned().unwrap_or(Value::Null),
+            "updatedAt": persona.get("updatedAt").cloned().unwrap_or(Value::Null)
+        }),
+    );
+    Ok(json!({
+        "type": "marinara_persona",
+        "version": 1,
+        "exportedAt": now_iso(),
+        "data": Value::Object(data)
+    }))
+}
+
+fn compatible_persona_export(persona: &Value) -> Value {
+    let mut data = persona_data_object(persona);
+    data.insert(
+        "extensions".to_string(),
+        json!({
+            "marinara": {
+                "exportedAt": now_iso(),
+                "source": "Marinara Engine compatibility export"
+            }
+        }),
+    );
+    Value::Object(data)
+}
+
+fn persona_data_object(persona: &Value) -> Map<String, Value> {
+    let mut data = persona.as_object().cloned().unwrap_or_default();
+    for key in [
+        "id",
+        "createdAt",
+        "updatedAt",
+        "avatar",
+        "avatarPath",
+        "avatarFilePath",
+        "avatarFilename",
+        "avatarUpdatedAt",
+        "isActive",
+    ] {
+        data.remove(key);
+    }
+    data
+}
+
+fn preset_export_envelope(state: &AppState, preset: &Value) -> AppResult<Value> {
+    let preset_id = record_id(preset, "preset")?;
+    Ok(json!({
+        "type": "marinara_preset",
+        "version": 1,
+        "exportedAt": now_iso(),
+        "data": {
+            "preset": preset,
+            "sections": list_collection(state, "prompt-sections", Some(("presetId", preset_id)))?,
+            "groups": list_collection(state, "prompt-groups", Some(("presetId", preset_id)))?,
+            "choiceBlocks": list_collection(state, "prompt-variables", Some(("presetId", preset_id)))?
+        }
+    }))
+}
+
+fn compatible_lorebook_export(lorebook: &Value, entries: &Value) -> Value {
+    let mut exported_entries = Map::new();
+    for (index, entry) in entries.as_array().into_iter().flatten().enumerate() {
+        exported_entries.insert(
+            index.to_string(),
+            json!({
+                "uid": index as i64,
+                "key": string_array_for_export(entry.get("keys")),
+                "keysecondary": string_array_for_export(entry.get("secondaryKeys")),
+                "comment": entry.get("name").and_then(Value::as_str).unwrap_or(&format!("Entry {}", index + 1)),
+                "content": entry.get("content").and_then(Value::as_str).unwrap_or(""),
+                "disable": entry.get("enabled").and_then(Value::as_bool).map(|enabled| !enabled).unwrap_or(false),
+                "constant": entry.get("constant").and_then(Value::as_bool).unwrap_or(false),
+                "selective": entry.get("selective").and_then(Value::as_bool).unwrap_or(false),
+                "selectiveLogic": st_selective_logic(entry.get("selectiveLogic")),
+                "order": numeric_value(entry.get("order"), 100),
+                "position": numeric_value(entry.get("position"), 0),
+                "depth": numeric_value(entry.get("depth"), 4),
+                "probability": entry.get("probability").cloned().unwrap_or(Value::Null),
+                "scanDepth": entry.get("scanDepth").cloned().unwrap_or(Value::Null),
+                "matchWholeWords": entry.get("matchWholeWords").and_then(Value::as_bool).unwrap_or(false),
+                "caseSensitive": entry.get("caseSensitive").and_then(Value::as_bool).unwrap_or(false),
+                "role": st_role(entry.get("role")),
+                "group": entry.get("group").and_then(Value::as_str).unwrap_or(""),
+                "groupWeight": entry.get("groupWeight").cloned().unwrap_or(Value::Null),
+                "sticky": entry.get("sticky").cloned().unwrap_or(Value::Null),
+                "cooldown": entry.get("cooldown").cloned().unwrap_or(Value::Null),
+                "delay": entry.get("delay").cloned().unwrap_or(Value::Null)
+            }),
+        );
+    }
+
+    json!({
+        "name": lorebook.get("name").and_then(Value::as_str).unwrap_or("Lorebook"),
+        "extensions": {
+            "marinara": {
+                "exportedAt": now_iso(),
+                "source": "Marinara Engine compatibility export"
+            }
+        },
+        "entries": Value::Object(exported_entries)
+    })
 }
 
 fn character_data_value(character: &Value) -> Value {
@@ -349,6 +547,219 @@ fn patch_character_embedded_lorebook_pointer(
     Ok(())
 }
 
+fn record_id<'a>(record: &'a Value, kind: &str) -> AppResult<&'a str> {
+    record
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::new("storage_error", format!("{kind} record is missing an id")))
+}
+
+fn item_export_name(collection: &str, record: &Value) -> Option<String> {
+    if collection == "characters" {
+        return character_data_value(record)
+            .get("name")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+    }
+    record
+        .get("name")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn singular_export_name(collection: &str) -> &'static str {
+    match collection {
+        "characters" => "character",
+        "personas" => "persona",
+        "prompts" => "preset",
+        _ => "record",
+    }
+}
+
+fn named_zip_filename(collection: &str, compatible: bool) -> &'static str {
+    match (collection, compatible) {
+        ("characters", true) => "compatible-characters.zip",
+        ("characters", false) => "marinara-characters.zip",
+        ("personas", true) => "compatible-personas.zip",
+        ("personas", false) => "marinara-personas.zip",
+        ("prompts", _) => "marinara-presets.zip",
+        _ => "marinara-records.zip",
+    }
+}
+
+fn avatar_data_url(state: &AppState, record: &Value) -> Option<String> {
+    for key in ["avatar", "avatarPath"] {
+        let Some(value) = record.get(key).and_then(Value::as_str) else {
+            continue;
+        };
+        if value.starts_with("data:image/") {
+            return Some(value.to_string());
+        }
+    }
+    record
+        .get("avatarFilePath")
+        .and_then(Value::as_str)
+        .and_then(|path| data_url_from_current_file(state, path))
+}
+
+fn data_url_from_current_file(state: &AppState, path: &str) -> Option<String> {
+    let path = PathBuf::from(path);
+    let canonical_data_dir = fs::canonicalize(&state.data_dir).ok()?;
+    let canonical_path = fs::canonicalize(path).ok()?;
+    if !canonical_path.starts_with(canonical_data_dir) {
+        return None;
+    }
+    let bytes = fs::read(&canonical_path).ok()?;
+    Some(format!(
+        "data:{};base64,{}",
+        image_mime_from_path(&canonical_path),
+        general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+fn sprites_for_id(state: &AppState, id: &str) -> AppResult<Vec<Value>> {
+    if id.contains('/') || id.contains('\\') {
+        return Ok(Vec::new());
+    }
+    let dir = state.data_dir.join("sprites").join(id);
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut sprites = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let path = entry?.path();
+        if !path.is_file() || !is_export_image_file(&path) {
+            continue;
+        }
+        let Some(filename) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(data) = data_url_from_file(&path) else {
+            continue;
+        };
+        sprites.push(json!({
+            "filename": filename,
+            "data": data
+        }));
+    }
+    sprites.sort_by(|a, b| {
+        a.get("filename")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(b.get("filename").and_then(Value::as_str).unwrap_or(""))
+    });
+    Ok(sprites)
+}
+
+fn gallery_for_character(state: &AppState, character_id: &str) -> AppResult<Vec<Value>> {
+    let records = list_collection(
+        state,
+        "character-gallery",
+        Some(("characterId", character_id)),
+    )?;
+    let mut gallery = Vec::new();
+    for record in records.as_array().into_iter().flatten() {
+        let Some(data) = record
+            .get("url")
+            .and_then(Value::as_str)
+            .filter(|value| value.starts_with("data:image/"))
+        else {
+            continue;
+        };
+        let filename = record
+            .get("filename")
+            .or_else(|| record.get("filePath"))
+            .and_then(Value::as_str)
+            .unwrap_or("image.png");
+        gallery.push(json!({
+            "filename": filename,
+            "data": data,
+            "prompt": record.get("prompt").cloned().unwrap_or_else(|| json!("")),
+            "provider": record.get("provider").cloned().unwrap_or_else(|| json!("")),
+            "model": record.get("model").cloned().unwrap_or_else(|| json!("")),
+            "width": record.get("width").cloned().unwrap_or(Value::Null),
+            "height": record.get("height").cloned().unwrap_or(Value::Null)
+        }));
+    }
+    Ok(gallery)
+}
+
+fn data_url_from_file(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    Some(format!(
+        "data:{};base64,{}",
+        image_mime_from_path(path),
+        general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+fn is_export_image_file(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "webp" | "gif" | "avif" | "svg")
+    )
+}
+
+fn image_mime_from_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        _ => "image/png",
+    }
+}
+
+fn string_array_for_export(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(ToOwned::to_owned)
+            .collect(),
+        Some(Value::String(raw)) => {
+            serde_json::from_str::<Vec<String>>(raw).unwrap_or_else(|_| vec![raw.to_string()])
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn numeric_value(value: Option<&Value>, fallback: i64) -> i64 {
+    value
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|raw| raw.parse::<i64>().ok()))
+        })
+        .unwrap_or(fallback)
+}
+
+fn st_selective_logic(value: Option<&Value>) -> i64 {
+    match value.and_then(Value::as_str) {
+        Some("or") => 1,
+        Some("not") => 2,
+        _ => 0,
+    }
+}
+
+fn st_role(value: Option<&Value>) -> i64 {
+    match value.and_then(Value::as_str) {
+        Some("user") => 1,
+        Some("assistant") => 2,
+        _ => 0,
+    }
+}
+
 struct ExportZip {
     writer: zip::ZipWriter<Cursor<Vec<u8>>>,
     options: SimpleFileOptions,
@@ -376,13 +787,17 @@ impl ExportZip {
     }
 }
 
-fn character_card_png(card: &Value) -> AppResult<Vec<u8>> {
+fn character_card_png(card: &Value, png_bytes: Option<&[u8]>) -> AppResult<Vec<u8>> {
+    let chara = general_purpose::STANDARD.encode(serde_json::to_vec(card)?);
+    if let Some(png_bytes) = png_bytes {
+        return inject_text_chunk(png_bytes, "chara", &chara);
+    }
+
     let mut bytes = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        let chara = general_purpose::STANDARD.encode(serde_json::to_vec(card)?);
         encoder
             .add_text_chunk("chara".to_string(), chara)
             .map_err(|error| AppError::new("png_export_error", error.to_string()))?;
@@ -394,6 +809,94 @@ fn character_card_png(card: &Value) -> AppResult<Vec<u8>> {
             .map_err(|error| AppError::new("png_export_error", error.to_string()))?;
     }
     Ok(bytes)
+}
+
+fn png_data_url_bytes(value: &str) -> Option<Vec<u8>> {
+    let (header, payload) = value.split_once(',')?;
+    if !header.to_ascii_lowercase().starts_with("data:image/png") {
+        return None;
+    }
+    general_purpose::STANDARD.decode(payload).ok()
+}
+
+fn inject_text_chunk(png: &[u8], keyword: &str, text: &str) -> AppResult<Vec<u8>> {
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if png.len() < PNG_SIGNATURE.len() || &png[..PNG_SIGNATURE.len()] != PNG_SIGNATURE {
+        return Err(AppError::new("png_export_error", "Invalid PNG signature"));
+    }
+
+    let text_chunk = build_png_chunk(
+        b"tEXt",
+        &[keyword.as_bytes(), &[0], text.as_bytes()].concat(),
+    );
+    let mut parts = Vec::new();
+    parts.extend_from_slice(PNG_SIGNATURE);
+    let mut offset = PNG_SIGNATURE.len();
+    let mut inserted = false;
+    while offset + 12 <= png.len() {
+        let length = u32::from_be_bytes(png[offset..offset + 4].try_into().unwrap()) as usize;
+        let chunk_start = offset;
+        let chunk_type_start = offset + 4;
+        let data_start = offset + 8;
+        let data_end = data_start.saturating_add(length);
+        let chunk_end = data_end.saturating_add(4);
+        if chunk_end > png.len() {
+            return Err(AppError::new(
+                "png_export_error",
+                "Invalid PNG chunk bounds",
+            ));
+        }
+        let chunk_type = &png[chunk_type_start..chunk_type_start + 4];
+        let chunk_data = &png[data_start..data_end];
+        let is_card_text = png_text_keyword(chunk_type, chunk_data)
+            .is_some_and(|value| value == "chara" || value == "ccv3");
+        if is_card_text {
+            offset = chunk_end;
+            continue;
+        }
+        if !inserted && (chunk_type == b"IDAT" || chunk_type == b"IEND") {
+            parts.extend_from_slice(&text_chunk);
+            inserted = true;
+        }
+        parts.extend_from_slice(&png[chunk_start..chunk_end]);
+        offset = chunk_end;
+        if chunk_type == b"IEND" {
+            break;
+        }
+    }
+    if !inserted {
+        parts.extend_from_slice(&text_chunk);
+    }
+    Ok(parts)
+}
+
+fn png_text_keyword<'a>(chunk_type: &[u8], chunk_data: &'a [u8]) -> Option<&'a str> {
+    if chunk_type != b"tEXt" && chunk_type != b"iTXt" {
+        return None;
+    }
+    let end = chunk_data.iter().position(|byte| *byte == 0)?;
+    std::str::from_utf8(&chunk_data[..end]).ok()
+}
+
+fn build_png_chunk(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(12 + data.len());
+    bytes.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    bytes.extend_from_slice(chunk_type);
+    bytes.extend_from_slice(data);
+    let crc_input = [chunk_type.as_slice(), data].concat();
+    bytes.extend_from_slice(&crc32(&crc_input).to_be_bytes());
+    bytes
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in bytes {
+        crc ^= *byte as u32;
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ if crc & 1 == 1 { 0xedb8_8320 } else { 0 };
+        }
+    }
+    crc ^ 0xffff_ffff
 }
 
 fn binary_download(bytes: Vec<u8>, content_type: &str, filename: &str) -> Value {

@@ -3,7 +3,7 @@ import { Camera, ImagePlus, Loader2, Wand2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConnections } from "../../../features/connections/hooks/use-connections";
 import { useUIStore } from "../../stores/ui.store";
-import { api } from "../../lib/api-client";
+import { api } from "../../api/api-client";
 import { cn } from "../../lib/utils";
 import { urlToDataUrl } from "../../lib/url-blob";
 import { Modal } from "./Modal";

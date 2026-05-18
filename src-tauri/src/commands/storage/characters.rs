@@ -30,7 +30,10 @@ pub(crate) fn restore_character_version(
     }
     let mut patch = Map::new();
     if let Some(data) = version.get("data") {
-        patch.insert("data".to_string(), normalize_character_data_for_storage(data)?);
+        patch.insert(
+            "data".to_string(),
+            normalize_character_data_for_storage(data)?,
+        );
     }
     if let Some(comment) = version.get("comment") {
         patch.insert("comment".to_string(), comment.clone());

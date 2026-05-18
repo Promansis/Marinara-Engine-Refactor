@@ -529,9 +529,6 @@ const IMAGE_GEN_MODELS: KnownModel[] = [
   { id: "sd3.5-large-turbo", name: "SD3.5 Large Turbo", context: 0, maxOutput: 0 },
   { id: "sd3.5-medium", name: "Stable Diffusion 3.5 Medium", context: 0, maxOutput: 0 },
   { id: "sd3.5-flash", name: "Stable Diffusion 3.5 Flash", context: 0, maxOutput: 0 },
-  { id: "sd3-large", name: "Stable Diffusion 3 Large (legacy alias)", context: 0, maxOutput: 0 },
-  { id: "sd3-large-turbo", name: "SD3 Large Turbo (legacy alias)", context: 0, maxOutput: 0 },
-  { id: "sd3-medium", name: "Stable Diffusion 3 Medium (legacy alias)", context: 0, maxOutput: 0 },
   // Together AI
   { id: "black-forest-labs/FLUX.1-schnell-Free", name: "FLUX.1 Schnell (Free)", context: 0, maxOutput: 0 },
   { id: "black-forest-labs/FLUX.1-schnell", name: "FLUX.1 Schnell", context: 0, maxOutput: 0 },

@@ -47,7 +47,10 @@ fn list_fonts(state: &AppState) -> AppResult<Value> {
         if !FONT_EXTS.contains(&ext.as_str()) {
             continue;
         }
-        let meta = metadata.get(&filename).cloned().unwrap_or_else(|| json!({}));
+        let meta = metadata
+            .get(&filename)
+            .cloned()
+            .unwrap_or_else(|| json!({}));
         fonts.push(json!({
             "filename": filename,
             "family": meta.get("family").and_then(Value::as_str).map(ToOwned::to_owned).unwrap_or_else(|| font_display_name(&filename)),
@@ -121,7 +124,11 @@ async fn download_google_font(state: &AppState, body: Value) -> AppResult<Value>
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AppError::invalid_input("Font family name is required"))?;
-    if family.len() > 100 || !family.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == ' ') {
+    if family.len() > 100
+        || !family
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == ' ')
+    {
         return Err(AppError::invalid_input(
             "Invalid font family name. Use only letters, numbers, and spaces.",
         ));
@@ -159,7 +166,10 @@ async fn download_google_font(state: &AppState, body: Value) -> AppResult<Value>
             .await
             .map_err(|error| AppError::new("font_download_failed", error.to_string()))?;
         if bytes.len() > 10 * 1024 * 1024 || bytes.get(0..4) != Some(b"wOF2") {
-            return Err(AppError::new("font_download_failed", "Downloaded file was not a valid woff2 font"));
+            return Err(AppError::new(
+                "font_download_failed",
+                "Downloaded file was not a valid woff2 font",
+            ));
         }
         fs::write(root.join(&filename), &bytes)?;
         metadata.insert(
@@ -181,10 +191,17 @@ async fn download_google_font(state: &AppState, body: Value) -> AppResult<Value>
             "unicodeRange": face.unicode_range
         }));
         if let Some(object) = files.last_mut().and_then(Value::as_object_mut) {
-            let filename = object.get("filename").and_then(Value::as_str).unwrap_or("").to_string();
+            let filename = object
+                .get("filename")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             object.insert(
                 "url".to_string(),
-                Value::String(format!("tauri-api:/fonts/file/{}", percent_encode_component(&filename))),
+                Value::String(format!(
+                    "tauri-api:/fonts/file/{}",
+                    percent_encode_component(&filename)
+                )),
             );
         }
     }
@@ -238,8 +255,12 @@ async fn fetch_google_font_faces(family: &str) -> AppResult<Vec<FontFace>> {
 fn parse_google_font_faces(css: &str) -> AppResult<Vec<FontFace>> {
     let mut faces = Vec::new();
     for block in css.split("@font-face").skip(1) {
-        let Some(start) = block.find('{') else { continue };
-        let Some(end) = block[start + 1..].find('}') else { continue };
+        let Some(start) = block.find('{') else {
+            continue;
+        };
+        let Some(end) = block[start + 1..].find('}') else {
+            continue;
+        };
         let body = &block[start + 1..start + 1 + end];
         let Some(url_start) = body.find("https://fonts.gstatic.com/") else {
             continue;
@@ -253,7 +274,9 @@ fn parse_google_font_faces(css: &str) -> AppResult<Vec<FontFace>> {
             url,
             weight: css_descriptor(body, "font-weight").unwrap_or_else(|| "400".to_string()),
             style: css_descriptor(body, "font-style").unwrap_or_else(|| "normal".to_string()),
-            unicode_range: css_descriptor(body, "unicode-range").map(Value::String).unwrap_or(Value::Null),
+            unicode_range: css_descriptor(body, "unicode-range")
+                .map(Value::String)
+                .unwrap_or(Value::Null),
         });
     }
     if faces.is_empty() {
@@ -268,7 +291,13 @@ fn css_descriptor(body: &str, key: &str) -> Option<String> {
     let colon = rest.find(':')?;
     let value = &rest[colon + 1..];
     let semicolon = value.find(';')?;
-    Some(value[..semicolon].trim().trim_matches('"').trim_matches('\'').to_string())
+    Some(
+        value[..semicolon]
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string(),
+    )
 }
 
 fn read_font_metadata(root: &Path) -> Map<String, Value> {
@@ -281,7 +310,10 @@ fn read_font_metadata(root: &Path) -> Map<String, Value> {
 }
 
 fn write_font_metadata(root: &Path, metadata: &Map<String, Value>) -> AppResult<()> {
-    fs::write(root.join("font-metadata.json"), serde_json::to_vec_pretty(metadata)?)?;
+    fs::write(
+        root.join("font-metadata.json"),
+        serde_json::to_vec_pretty(metadata)?,
+    )?;
     Ok(())
 }
 

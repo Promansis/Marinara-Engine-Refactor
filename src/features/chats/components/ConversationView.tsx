@@ -547,7 +547,7 @@ export function ConversationView({
         const currExtra = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
         const prevId = prevExtra.personaSnapshot?.personaId;
         const currId = currExtra.personaSnapshot?.personaId;
-        // If either message lacks a snapshot, don't break grouping (legacy messages)
+        // If either message lacks a snapshot, don't break grouping.
         if (!prevId || !currId) return false;
         return prevId !== currId;
       })();

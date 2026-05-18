@@ -37,7 +37,6 @@ export function stripGmCommandTags(content: string): string {
     .replace(/\[element_attack:\s*[^\]]+\]/gi, "")
     .replace(/\[inventory:\s*[^\]]+\]/gi, "")
     .replace(/\[party_change:\s*[^\]]+\]/gi, "")
-    .replace(/\[party_add:\s*[^\]]+\]/gi, "")
     .replace(/\[party-turn\]/gi, "")
     .replace(/\[party-chat\]/gi, "")
     .replace(/\[dice:\s*[^\]]+\]/gi, "");
@@ -334,7 +333,7 @@ function parseSegments(stripped: string): ParsedSegment[] {
       continue;
     }
 
-    // Dialogue (legacy or compact)
+    // Dialogue
     const dialogueMatch = line.match(LEGACY_DIALOGUE_RE) || line.match(COMPACT_DIALOGUE_RE);
     if (dialogueMatch) {
       flushFallback();

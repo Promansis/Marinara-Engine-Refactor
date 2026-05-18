@@ -2,7 +2,7 @@
 // Hook: TTS Config & Voices
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api-client";
+import { api } from "../api/api-client";
 import type { TTSConfig, TTSVoicesResponse, TTSSource } from "@marinara-engine/shared";
 import { TTS_API_KEY_MASK } from "@marinara-engine/shared";
 

@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { Modal } from "../../../shared/components/ui/Modal";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { useUIStore } from "../../../shared/stores/ui.store";
 import { Loader2, FileText } from "lucide-react";
 import { toast } from "sonner";

@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 
@@ -19,6 +20,7 @@ const NOVELAI_V4_PROMPT_HINT: &str = "NovelAI V4/V4.5 prompts support roughly 51
 pub(crate) struct ImageGenerationOptions {
     pub(crate) negative_prompt: Option<String>,
     pub(crate) reference_images: Vec<String>,
+    pub(crate) transparent_background: bool,
 }
 
 pub(crate) async fn generate_image_with_connection(
@@ -51,19 +53,33 @@ pub(crate) async fn generate_image_with_options(
     }
     let source = image_source(connection);
     match source.as_str() {
-        "pollinations" => generate_pollinations(connection, prompt, width, height).await,
-        "stability" => generate_stability(connection, prompt).await,
+        "pollinations" => {
+            generate_pollinations(
+                connection,
+                prompt,
+                width,
+                height,
+                options.negative_prompt.as_deref(),
+            )
+            .await
+        }
+        "stability" => generate_stability(connection, prompt, width, height, &options).await,
         "automatic1111" | "drawthings" => {
-            generate_automatic1111(connection, prompt, width, height, options.negative_prompt.as_deref()).await
+            generate_automatic1111(connection, prompt, width, height, &options).await
         }
         "comfyui" => generate_comfyui(connection, prompt, width, height, &options).await,
-        "runpod_comfyui" => generate_runpod_comfyui(connection, prompt, width, height, &options).await,
-        "horde" => generate_horde(connection, prompt, width, height).await,
+        "runpod_comfyui" => {
+            generate_runpod_comfyui(connection, prompt, width, height, &options).await
+        }
+        "horde" => generate_horde(connection, prompt, width, height, &options).await,
         "novelai" => generate_novelai(connection, prompt, width, height, &options).await,
-        "openrouter" | "gemini_image" => generate_chat_image(connection, prompt, width, height, &options).await,
+        "openrouter" | "gemini_image" => {
+            generate_chat_image(connection, prompt, width, height, &options).await
+        }
         "xai" => generate_xai(connection, prompt, width, height).await,
         "openai" | "togetherai" | "nanogpt" | "blockentropy" | "" => {
-            generate_openai_compatible_image(connection, &source, prompt, width, height).await
+            generate_openai_compatible_image(connection, &source, prompt, width, height, &options)
+                .await
         }
         other => Err(AppError::invalid_input(format!(
             "Unsupported image generation service: {other}"
@@ -273,7 +289,10 @@ async fn response_json(response: reqwest::Response, provider: &str) -> AppResult
     if !status.is_success() {
         return Err(AppError::new(
             "image_provider_error",
-            format!("{provider} returned HTTP {status}: {}", sanitize_error(&text)),
+            format!(
+                "{provider} returned HTTP {status}: {}",
+                sanitize_error(&text)
+            ),
         ));
     }
     serde_json::from_str::<Value>(&text).map_err(|error| {
@@ -284,7 +303,10 @@ async fn response_json(response: reqwest::Response, provider: &str) -> AppResult
     })
 }
 
-async fn image_response_base64(response: reqwest::Response, provider: &str) -> AppResult<(String, String)> {
+async fn image_response_base64(
+    response: reqwest::Response,
+    provider: &str,
+) -> AppResult<(String, String)> {
     let status = response.status();
     let content_type = response
         .headers()
@@ -300,7 +322,10 @@ async fn image_response_base64(response: reqwest::Response, provider: &str) -> A
         let text = String::from_utf8_lossy(&bytes);
         return Err(AppError::new(
             "image_provider_error",
-            format!("{provider} returned HTTP {status}: {}", sanitize_error(&text)),
+            format!(
+                "{provider} returned HTTP {status}: {}",
+                sanitize_error(&text)
+            ),
         ));
     }
     Ok((general_purpose::STANDARD.encode(bytes), content_type))
@@ -354,6 +379,65 @@ fn detect_base64_mime_type(base64: &str) -> String {
         .unwrap_or_else(|| "image/png".to_string())
 }
 
+#[derive(Clone, Debug)]
+struct DecodedReferenceImage {
+    base64: String,
+    mime_type: String,
+    extension: &'static str,
+    bytes: Vec<u8>,
+}
+
+fn image_extension_from_mime_type(mime_type: &str) -> &'static str {
+    if mime_type.contains("jpeg") || mime_type.contains("jpg") {
+        "jpg"
+    } else if mime_type.contains("webp") {
+        "webp"
+    } else if mime_type.contains("gif") {
+        "gif"
+    } else {
+        "png"
+    }
+}
+
+fn decode_reference_image(reference: &str) -> AppResult<DecodedReferenceImage> {
+    let trimmed = reference.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Err(AppError::invalid_input(
+            "Reference images for this provider must be base64 image data",
+        ));
+    }
+    let has_declared_mime = trimmed.starts_with("data:");
+    let (base64, declared_mime) = strip_data_url(trimmed);
+    let normalized = base64.split_whitespace().collect::<String>();
+    if normalized.is_empty() {
+        return Err(AppError::invalid_input("Reference image is empty"));
+    }
+    let bytes = general_purpose::STANDARD
+        .decode(&normalized)
+        .map_err(|error| {
+            AppError::invalid_input(format!("Invalid reference image data: {error}"))
+        })?;
+    if bytes.is_empty() {
+        return Err(AppError::invalid_input("Reference image is empty"));
+    }
+    let detected = detect_image_mime_type(&bytes);
+    let mime_type = if has_declared_mime && declared_mime.starts_with("image/") {
+        declared_mime.to_string()
+    } else {
+        detected.to_string()
+    };
+    Ok(DecodedReferenceImage {
+        base64: normalized,
+        extension: image_extension_from_mime_type(&mime_type),
+        mime_type,
+        bytes,
+    })
+}
+
+fn reference_base64(reference: &str) -> AppResult<String> {
+    Ok(decode_reference_image(reference)?.base64)
+}
+
 async fn response_bytes(
     response: reqwest::Response,
     provider: &str,
@@ -374,7 +458,10 @@ async fn response_bytes(
         let text = String::from_utf8_lossy(&bytes);
         return Err(AppError::new(
             "image_provider_error",
-            format!("{provider} returned HTTP {status}: {}", sanitize_error(&text)),
+            format!(
+                "{provider} returned HTTP {status}: {}",
+                sanitize_error(&text)
+            ),
         ));
     }
     Ok((bytes, content_type))
@@ -394,6 +481,7 @@ async fn generate_pollinations(
     prompt: &str,
     width: u64,
     height: u64,
+    negative_prompt: Option<&str>,
 ) -> AppResult<(String, String)> {
     let base = connection
         .get("baseUrl")
@@ -403,7 +491,16 @@ async fn generate_pollinations(
         .trim_end_matches('/');
     let encoded_prompt = percent_encode_component(prompt);
     let seed = now_millis() % 1_000_000_000;
-    let url = format!("{base}/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&seed={seed}");
+    let mut url = format!(
+        "{base}/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&seed={seed}"
+    );
+    if let Some(negative) = negative_prompt
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        url.push_str("&negative=");
+        url.push_str(&percent_encode_component(negative));
+    }
     fetch_image_url(&http_client(120)?, &url).await
 }
 
@@ -413,40 +510,184 @@ async fn generate_openai_compatible_image(
     prompt: &str,
     width: u64,
     height: u64,
+    options: &ImageGenerationOptions,
 ) -> AppResult<(String, String)> {
     let source = if source.is_empty() { "openai" } else { source };
-    let base = connection_base_url(connection, source);
-    let model = connection_model(
-        connection,
-        match source {
-            "xai" => "grok-2-image",
-            "togetherai" => "black-forest-labs/FLUX.1-schnell",
-            _ => "gpt-image-1",
-        },
-    );
-    let client = http_client(180)?;
-    let mut endpoint = format!("{base}/images/generations");
     if source == "nanogpt" {
-        endpoint = nanogpt_images_url(&base);
+        return generate_nanogpt_image(connection, prompt, width, height, options).await;
     }
-    let payload = json!({
-        "model": model,
-        "prompt": prompt,
-        "n": 1,
-        "size": format!("{width}x{height}"),
-        "response_format": "b64_json"
-    });
+    if source == "togetherai" {
+        return generate_together_image(connection, prompt, width, height, options).await;
+    }
+
+    let base = connection_base_url(connection, source);
+    let model = connection_model(connection, "gpt-image-1");
+    let client = http_client(180)?;
+    let uses_gpt_image_api = is_openai_gpt_image_model(&model);
+    if uses_gpt_image_api && !options.reference_images.is_empty() {
+        let mut form = reqwest::multipart::Form::new()
+            .text("prompt", prompt.to_string())
+            .text("n", "1")
+            .text("size", openai_image_size(&model, width, height))
+            .text("output_format", "png");
+        if options.transparent_background && supports_openai_transparent_background(&model) {
+            form = form.text("background", "transparent");
+        }
+        if !model.trim().is_empty() {
+            form = form.text("model", model.clone());
+        }
+        for (index, reference) in options.reference_images.iter().take(16).enumerate() {
+            let decoded = decode_reference_image(reference)?;
+            let part = reqwest::multipart::Part::bytes(decoded.bytes)
+                .mime_str(&decoded.mime_type)
+                .map_err(|error| {
+                    AppError::invalid_input(format!("Invalid reference image MIME type: {error}"))
+                })?
+                .file_name(format!("reference-{}.{}", index + 1, decoded.extension));
+            form = form.part("image[]", part);
+        }
+        let response = bearer(
+            client
+                .post(openai_images_url(&base, "edits"))
+                .multipart(form),
+            &connection_api_key(connection),
+        )
+        .send()
+        .await
+        .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+        let json = response_json(response, source).await?;
+        return parse_image_json(&client, &json).await.ok_or_else(|| {
+            AppError::new(
+                "image_response_error",
+                format!("{source} returned no image data"),
+            )
+        });
+    }
+
+    let mut payload = Map::new();
+    payload.insert("model".to_string(), Value::String(model.clone()));
+    payload.insert("prompt".to_string(), Value::String(prompt.to_string()));
+    payload.insert("n".to_string(), json!(1));
+    payload.insert(
+        "size".to_string(),
+        Value::String(openai_image_size(&model, width, height)),
+    );
+    if uses_gpt_image_api {
+        payload.insert(
+            "output_format".to_string(),
+            Value::String("png".to_string()),
+        );
+        if options.transparent_background && supports_openai_transparent_background(&model) {
+            payload.insert(
+                "background".to_string(),
+                Value::String("transparent".to_string()),
+            );
+        }
+    } else {
+        payload.insert(
+            "response_format".to_string(),
+            Value::String("b64_json".to_string()),
+        );
+    }
     let response = bearer(
-        client.post(endpoint).json(&payload),
+        client
+            .post(openai_images_url(&base, "generations"))
+            .json(&Value::Object(payload)),
         &connection_api_key(connection),
     )
     .send()
     .await
     .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
     let json = response_json(response, source).await?;
-    parse_image_json(&client, &json)
-        .await
-        .ok_or_else(|| AppError::new("image_response_error", format!("{source} returned no image data")))
+    parse_image_json(&client, &json).await.ok_or_else(|| {
+        AppError::new(
+            "image_response_error",
+            format!("{source} returned no image data"),
+        )
+    })
+}
+
+pub(crate) fn is_openai_gpt_image_model(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    lower == "gpt-image-1"
+        || lower.starts_with("gpt-image-1-")
+        || lower == "gpt-image-1.5"
+        || lower.starts_with("gpt-image-1.5-")
+        || lower == "gpt-image-2"
+        || lower.starts_with("gpt-image-2-")
+}
+
+fn supports_openai_transparent_background(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    lower == "gpt-image-1"
+        || lower.starts_with("gpt-image-1-")
+        || lower == "gpt-image-1.5"
+        || lower.starts_with("gpt-image-1.5-")
+}
+
+fn openai_image_size(model: &str, width: u64, height: u64) -> String {
+    let requested = format!("{width}x{height}");
+    let lower = model.trim().to_ascii_lowercase();
+    let ratio = width as f64 / height.max(1) as f64;
+    if lower.contains("dall-e-2") {
+        return if width == height && matches!(width, 256 | 512 | 1024) {
+            requested
+        } else {
+            "1024x1024".to_string()
+        };
+    }
+    if lower.contains("dall-e-3") {
+        return if ratio > 1.12 {
+            "1792x1024".to_string()
+        } else if ratio < 0.88 {
+            "1024x1792".to_string()
+        } else {
+            "1024x1024".to_string()
+        };
+    }
+    if is_openai_gpt_image_model(model) {
+        return if ratio > 1.12 {
+            "1536x1024".to_string()
+        } else if ratio < 0.88 {
+            "1024x1536".to_string()
+        } else {
+            "1024x1024".to_string()
+        };
+    }
+    requested
+}
+
+fn openai_images_url(base: &str, endpoint: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    let target_path = format!("/images/{endpoint}");
+    if let Ok(mut parsed) = reqwest::Url::parse(trimmed) {
+        let path = parsed.path().trim_end_matches('/');
+        let next_path = if path.ends_with("/images/generations")
+            || path.ends_with("/images/edits")
+            || path.ends_with("/images/variations")
+        {
+            let base_path = path
+                .rsplit_once("/images/")
+                .map(|(prefix, _)| prefix)
+                .unwrap_or("");
+            format!("{base_path}{target_path}")
+        } else if path.is_empty() || path == "/" {
+            format!("/v1{target_path}")
+        } else if path.ends_with("/api/v1") {
+            format!("{}/v1{target_path}", path.trim_end_matches("/api/v1"))
+        } else if path.ends_with("/api") {
+            format!("{}/v1{target_path}", path.trim_end_matches("/api"))
+        } else if path.ends_with("/v1") {
+            format!("{path}{target_path}")
+        } else {
+            format!("{path}{target_path}")
+        };
+        parsed.set_path(&next_path);
+        parsed.set_query(None);
+        parsed.set_fragment(None);
+        return parsed.to_string().trim_end_matches('/').to_string();
+    }
+    format!("{trimmed}{target_path}")
 }
 
 async fn generate_xai(
@@ -466,7 +707,7 @@ async fn generate_xai(
         "response_format": "b64_json"
     });
     let response = bearer(
-        client.post(format!("{base}/images/generations")).json(&payload),
+        client.post(xai_images_url(&base)).json(&payload),
         &connection_api_key(connection),
     )
     .send()
@@ -490,6 +731,10 @@ fn closest_xai_aspect_ratio(width: u64, height: u64) -> &'static str {
         ("2:3", 2.0 / 3.0),
         ("2:1", 2.0),
         ("1:2", 0.5),
+        ("19.5:9", 19.5 / 9.0),
+        ("9:19.5", 9.0 / 19.5),
+        ("20:9", 20.0 / 9.0),
+        ("9:20", 9.0 / 20.0),
     ]
     .into_iter()
     .min_by(|a, b| {
@@ -500,6 +745,17 @@ fn closest_xai_aspect_ratio(width: u64, height: u64) -> &'static str {
     })
     .map(|item| item.0)
     .unwrap_or("1:1")
+}
+
+fn xai_images_url(base: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if trimmed.ends_with("/images/generations") {
+        trimmed.to_string()
+    } else if trimmed.ends_with("/v1") {
+        format!("{trimmed}/images/generations")
+    } else {
+        format!("{trimmed}/v1/images/generations")
+    }
 }
 
 fn nanogpt_images_url(base: &str) -> String {
@@ -522,6 +778,126 @@ fn nanogpt_images_url(base: &str) -> String {
     format!("{trimmed}/images/generations")
 }
 
+async fn generate_nanogpt_image(
+    connection: &Value,
+    prompt: &str,
+    width: u64,
+    height: u64,
+    options: &ImageGenerationOptions,
+) -> AppResult<(String, String)> {
+    let base = connection_base_url(connection, "nanogpt");
+    let model = connection_model(connection, "gpt-image-1");
+    let size = if is_openai_gpt_image_model(&model) {
+        openai_image_size(&model, width, height)
+    } else {
+        format!("{width}x{height}")
+    };
+    let mut payload = Map::new();
+    payload.insert("prompt".to_string(), Value::String(prompt.to_string()));
+    payload.insert("model".to_string(), Value::String(model.clone()));
+    payload.insert("n".to_string(), json!(1));
+    payload.insert("size".to_string(), Value::String(size));
+    payload.insert(
+        "response_format".to_string(),
+        Value::String("b64_json".to_string()),
+    );
+    if let Some(negative) = options
+        .negative_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload.insert(
+            "negative_prompt".to_string(),
+            Value::String(negative.to_string()),
+        );
+    }
+    if model.to_ascii_lowercase().contains("flux-kontext") {
+        payload.insert("kontext_max_mode".to_string(), Value::Bool(true));
+    }
+    match options.reference_images.as_slice() {
+        [reference] => {
+            payload.insert(
+                "imageDataUrl".to_string(),
+                Value::String(image_data_url(reference)),
+            );
+        }
+        references if !references.is_empty() => {
+            payload.insert(
+                "imageDataUrls".to_string(),
+                Value::Array(
+                    references
+                        .iter()
+                        .map(|reference| Value::String(image_data_url(reference)))
+                        .collect(),
+                ),
+            );
+        }
+        _ => {}
+    }
+
+    let client = http_client(180)?;
+    let response = bearer(
+        client
+            .post(nanogpt_images_url(&base))
+            .json(&Value::Object(payload)),
+        &connection_api_key(connection),
+    )
+    .send()
+    .await
+    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    let json = response_json(response, "nanogpt").await?;
+    parse_image_json(&client, &json)
+        .await
+        .ok_or_else(|| AppError::new("image_response_error", "NanoGPT returned no image data"))
+}
+
+async fn generate_together_image(
+    connection: &Value,
+    prompt: &str,
+    width: u64,
+    height: u64,
+    options: &ImageGenerationOptions,
+) -> AppResult<(String, String)> {
+    let base = connection_base_url(connection, "togetherai");
+    let model = connection_model(connection, "black-forest-labs/FLUX.1-schnell-Free");
+    let mut payload = Map::new();
+    payload.insert("prompt".to_string(), Value::String(prompt.to_string()));
+    payload.insert("model".to_string(), Value::String(model));
+    payload.insert("n".to_string(), json!(1));
+    payload.insert("width".to_string(), json!(width));
+    payload.insert("height".to_string(), json!(height));
+    payload.insert(
+        "response_format".to_string(),
+        Value::String("b64_json".to_string()),
+    );
+    if let Some(negative) = options
+        .negative_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload.insert(
+            "negative_prompt".to_string(),
+            Value::String(negative.to_string()),
+        );
+    }
+    let client = http_client(180)?;
+    let response = bearer(
+        client
+            .post(format!("{base}/images/generations"))
+            .json(&Value::Object(payload)),
+        &connection_api_key(connection),
+    )
+    .send()
+    .await
+    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    let json = response_json(response, "togetherai").await?;
+    parse_image_json(&client, &json)
+        .await
+        .ok_or_else(|| AppError::new("image_response_error", "Together AI returned no image data"))
+}
+
 async fn generate_chat_image(
     connection: &Value,
     prompt: &str,
@@ -533,7 +909,11 @@ async fn generate_chat_image(
     let base = connection_base_url(connection, &source);
     let model = connection_model(connection, "google/gemini-2.5-flash-image");
     let client = http_client(180)?;
-    let prompt = match options.negative_prompt.as_deref().filter(|value| !value.trim().is_empty()) {
+    let prompt = match options
+        .negative_prompt
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         Some(negative) => format!("{prompt}\n\nAvoid in the image: {negative}"),
         None => prompt.to_string(),
     };
@@ -551,21 +931,50 @@ async fn generate_chat_image(
     let payload = json!({
         "model": model,
         "messages": [{ "role": "user", "content": content }],
-        "modalities": ["image", "text"],
+        "modalities": chat_image_modalities(&model),
         "stream": false,
         "image_config": { "aspect_ratio": closest_openrouter_aspect_ratio(width, height) }
     });
     let response = bearer(
-        client.post(format!("{base}/chat/completions")).json(&payload),
+        client.post(chat_completions_url(&base)).json(&payload),
         &connection_api_key(connection),
     )
     .send()
     .await
     .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
     let json = response_json(response, &source).await?;
-    parse_image_json(&client, &json)
-        .await
-        .ok_or_else(|| AppError::new("image_response_error", format!("{source} returned no image data")))
+    parse_image_json(&client, &json).await.ok_or_else(|| {
+        AppError::new(
+            "image_response_error",
+            format!("{source} returned no image data"),
+        )
+    })
+}
+
+fn chat_image_modalities(model: &str) -> Vec<&'static str> {
+    let lower = model.trim().to_ascii_lowercase();
+    if lower.starts_with("black-forest-labs/")
+        || lower.starts_with("sourceful/")
+        || lower.starts_with("recraft/")
+    {
+        vec!["image"]
+    } else {
+        vec!["image", "text"]
+    }
+}
+
+fn chat_completions_url(base: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if let Ok(mut parsed) = reqwest::Url::parse(trimmed) {
+        let path = parsed.path().trim_end_matches('/');
+        if !path.ends_with("/chat/completions") {
+            parsed.set_path(&format!("{path}/chat/completions"));
+        }
+        parsed.set_query(None);
+        parsed.set_fragment(None);
+        return parsed.to_string().trim_end_matches('/').to_string();
+    }
+    format!("{trimmed}/chat/completions")
 }
 
 async fn parse_image_json(client: &reqwest::Client, json: &Value) -> Option<(String, String)> {
@@ -620,7 +1029,9 @@ fn find_image_reference_in_text(raw: &str) -> Option<&str> {
     if let Some(start) = raw.find("http://").or_else(|| raw.find("https://")) {
         let rest = &raw[start..];
         let end = rest
-            .find(|ch: char| ch.is_whitespace() || ch == ')' || ch == '"' || ch == '\'' || ch == '<')
+            .find(|ch: char| {
+                ch.is_whitespace() || ch == ')' || ch == '"' || ch == '\'' || ch == '<'
+            })
             .unwrap_or(rest.len());
         let candidate = &rest[..end];
         if is_http_image_url(candidate) {
@@ -665,31 +1076,126 @@ fn closest_openrouter_aspect_ratio(width: u64, height: u64) -> &'static str {
 
 fn image_data_url(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.starts_with("data:") || trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+    if trimmed.starts_with("data:")
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+    {
         return trimmed.to_string();
     }
-    format!("data:{};base64,{}", detect_base64_mime_type(trimmed), trimmed)
+    format!(
+        "data:{};base64,{}",
+        detect_base64_mime_type(trimmed),
+        trimmed
+    )
 }
 
-async fn generate_stability(connection: &Value, prompt: &str) -> AppResult<(String, String)> {
+fn workflow_contains_token(workflow: &Value, token: &str) -> bool {
+    match workflow {
+        Value::String(raw) => raw.contains(token),
+        Value::Array(items) => items
+            .iter()
+            .any(|item| workflow_contains_token(item, token)),
+        Value::Object(map) => map
+            .values()
+            .any(|item| workflow_contains_token(item, token)),
+        _ => false,
+    }
+}
+
+async fn upload_comfy_reference_image(base: &str, reference: &str) -> AppResult<String> {
+    let decoded = decode_reference_image(reference)?;
+    let hash = Sha256::digest(&decoded.bytes);
+    let hash_id = general_purpose::URL_SAFE_NO_PAD.encode(&hash[..]);
+    let filename = format!("marinara-ref-{}.{}", &hash_id[..16], decoded.extension);
+    let part = reqwest::multipart::Part::bytes(decoded.bytes)
+        .mime_str(&decoded.mime_type)
+        .map_err(|error| {
+            AppError::invalid_input(format!("Invalid reference image MIME type: {error}"))
+        })?
+        .file_name(filename);
+    let form = reqwest::multipart::Form::new()
+        .part("image", part)
+        .text("overwrite", "true");
+    let response = http_client(180)?
+        .post(format!("{}/upload/image", base.trim_end_matches('/')))
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    let json = response_json(response, "comfyui").await?;
+    json.get("name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            AppError::new(
+                "image_response_error",
+                "ComfyUI did not return a filename for the uploaded reference image",
+            )
+        })
+}
+
+async fn generate_stability(
+    connection: &Value,
+    prompt: &str,
+    width: u64,
+    height: u64,
+    options: &ImageGenerationOptions,
+) -> AppResult<(String, String)> {
     let base = connection_base_url(connection, "stability");
+    if is_stability_v1_base(&base) {
+        return generate_stability_v1(connection, prompt, width, height, options).await;
+    }
     let model = connection_model(connection, "stable-image-core");
-    let endpoint = if model.contains("ultra") {
-        "stable-image/generate/ultra"
-    } else if model.contains("core") {
-        "stable-image/generate/core"
-    } else {
-        "stable-image/generate/sd3"
-    };
+    let has_reference = !options.reference_images.is_empty();
+    let lower_model = model.trim().to_ascii_lowercase();
+    let (endpoint, model_field) =
+        if !has_reference && matches!(lower_model.as_str(), "stable-image-ultra" | "ultra") {
+            ("v2beta/stable-image/generate/ultra".to_string(), None)
+        } else if !has_reference && matches!(lower_model.as_str(), "stable-image-core" | "core") {
+            ("v2beta/stable-image/generate/core".to_string(), None)
+        } else {
+            (
+                "v2beta/stable-image/generate/sd3".to_string(),
+                Some(normalize_stability_sd3_model(&model)),
+            )
+        };
     let mut form = reqwest::multipart::Form::new()
         .text("prompt", prompt.to_string())
         .text("output_format", "png".to_string());
-    if endpoint.ends_with("sd3") {
-        form = form.text("model", model).text("mode", "text-to-image".to_string());
+    if let Some(negative) = options
+        .negative_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        form = form.text("negative_prompt", negative.to_string());
+    }
+    if let Some(model_field) = model_field {
+        form = form
+            .text("model", model_field)
+            .text("mode", "text-to-image".to_string());
+    }
+    form = form.text(
+        "aspect_ratio",
+        closest_stability_aspect_ratio(width, height).to_string(),
+    );
+    if let Some(reference) = options.reference_images.first() {
+        let decoded = decode_reference_image(reference)?;
+        let part = reqwest::multipart::Part::bytes(decoded.bytes)
+            .mime_str(&decoded.mime_type)
+            .map_err(|error| {
+                AppError::invalid_input(format!("Invalid reference image MIME type: {error}"))
+            })?
+            .file_name(format!("reference.{}", decoded.extension));
+        form = form
+            .part("image", part)
+            .text("strength", "0.5".to_string())
+            .text("mode", "image-to-image".to_string());
     }
     let response = bearer(
         http_client(180)?
-            .post(format!("{base}/{endpoint}"))
+            .post(stability_url(&base, &endpoint))
             .header(reqwest::header::ACCEPT, "image/*")
             .multipart(form),
         &connection_api_key(connection),
@@ -700,12 +1206,157 @@ async fn generate_stability(connection: &Value, prompt: &str) -> AppResult<(Stri
     image_response_base64(response, "stability").await
 }
 
+async fn generate_stability_v1(
+    connection: &Value,
+    prompt: &str,
+    width: u64,
+    height: u64,
+    options: &ImageGenerationOptions,
+) -> AppResult<(String, String)> {
+    let base = connection_base_url(connection, "stability");
+    let engine = normalize_stability_v1_engine(
+        connection
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    );
+    let mut text_prompts = vec![json!({ "text": prompt, "weight": 1 })];
+    if let Some(negative) = options
+        .negative_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        text_prompts.push(json!({ "text": negative, "weight": -1 }));
+    }
+    let payload = json!({
+        "text_prompts": text_prompts,
+        "cfg_scale": 7,
+        "height": height,
+        "width": width,
+        "samples": 1,
+        "steps": 30
+    });
+    let client = http_client(180)?;
+    let response = bearer(
+        client
+            .post(stability_url(
+                &base,
+                &format!("v1/generation/{engine}/text-to-image"),
+            ))
+            .header(reqwest::header::ACCEPT, "application/json")
+            .json(&payload),
+        &connection_api_key(connection),
+    )
+    .send()
+    .await
+    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    let json = response_json(response, "stability").await?;
+    let base64 = json
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find_map(|item| item.get("base64").and_then(Value::as_str))
+        })
+        .ok_or_else(|| AppError::new("image_response_error", "Stability returned no image data"))?;
+    Ok((base64.to_string(), "image/png".to_string()))
+}
+
+fn stability_url(base: &str, target_path: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if let Ok(mut parsed) = reqwest::Url::parse(trimmed) {
+        let parts = parsed
+            .path()
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let version_index = parts
+            .iter()
+            .position(|part| *part == "v1" || *part == "v2beta");
+        let prefix = version_index
+            .map(|index| parts[..index].to_vec())
+            .unwrap_or(parts);
+        let path = prefix
+            .into_iter()
+            .chain(target_path.split('/').filter(|part| !part.is_empty()))
+            .collect::<Vec<_>>()
+            .join("/");
+        parsed.set_path(&format!("/{path}"));
+        parsed.set_query(None);
+        parsed.set_fragment(None);
+        return parsed.to_string().trim_end_matches('/').to_string();
+    }
+    format!("{}/{}", trimmed, target_path.trim_start_matches('/'))
+}
+
+fn is_stability_v1_base(base: &str) -> bool {
+    if let Ok(parsed) = reqwest::Url::parse(base) {
+        let parts = parsed.path().split('/').collect::<Vec<_>>();
+        return parts.contains(&"v1") && !parts.contains(&"v2beta");
+    }
+    base.contains("/v1") && !base.contains("/v2beta")
+}
+
+fn normalize_stability_sd3_model(model: &str) -> String {
+    let raw = if model.trim().is_empty() {
+        "sd3.5-large"
+    } else {
+        model.trim()
+    };
+    match raw.to_ascii_lowercase().as_str() {
+        "sd3-large" => "sd3.5-large".to_string(),
+        "sd3-large-turbo" => "sd3.5-large-turbo".to_string(),
+        "sd3-medium" => "sd3.5-medium".to_string(),
+        _ => raw.to_string(),
+    }
+}
+
+fn normalize_stability_v1_engine(model: &str) -> String {
+    let raw = model.trim();
+    let lower = raw.to_ascii_lowercase();
+    if raw.is_empty()
+        || lower.starts_with("sd3")
+        || lower.starts_with("stable-image")
+        || lower.contains('/')
+    {
+        "stable-diffusion-xl-1024-v1-0".to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
+fn closest_stability_aspect_ratio(width: u64, height: u64) -> &'static str {
+    let ratio = width as f64 / height.max(1) as f64;
+    [
+        ("21:9", 21.0 / 9.0),
+        ("16:9", 16.0 / 9.0),
+        ("3:2", 3.0 / 2.0),
+        ("5:4", 5.0 / 4.0),
+        ("1:1", 1.0),
+        ("4:5", 4.0 / 5.0),
+        ("2:3", 2.0 / 3.0),
+        ("9:16", 9.0 / 16.0),
+        ("9:21", 9.0 / 21.0),
+    ]
+    .into_iter()
+    .min_by(|a, b| {
+        (a.1 - ratio)
+            .abs()
+            .partial_cmp(&(b.1 - ratio).abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
+    .map(|item| item.0)
+    .unwrap_or("1:1")
+}
+
 async fn generate_automatic1111(
     connection: &Value,
     prompt: &str,
     width: u64,
     height: u64,
-    negative_prompt: Option<&str>,
+    options: &ImageGenerationOptions,
 ) -> AppResult<(String, String)> {
     let base = connection_base_url(connection, "automatic1111");
     let model = connection
@@ -718,7 +1369,7 @@ async fn generate_automatic1111(
     let prompt = merge_prompt(&read_string(defaults.get("promptPrefix"), ""), prompt);
     let negative_prompt = merge_negative_prompt(
         &read_string(defaults.get("negativePromptPrefix"), ""),
-        negative_prompt,
+        options.negative_prompt.as_deref(),
     );
     let steps = read_u64(defaults.get("steps"), 20, 1, 150);
     let cfg_scale = read_f64(defaults.get("cfgScale"), 7.0, 0.0, 30.0);
@@ -729,6 +1380,7 @@ async fn generate_automatic1111(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let seed = resolve_seed(connection);
+    let use_img2img = !options.reference_images.is_empty();
     let mut payload = json!({
         "prompt": prompt,
         "negative_prompt": negative_prompt,
@@ -738,8 +1390,15 @@ async fn generate_automatic1111(
         "cfg_scale": cfg_scale,
         "sampler_name": sampler,
         "restore_faces": restore_faces,
-        "seed": seed
+        "seed": seed,
+        "batch_size": 1,
+        "n_iter": 1
     });
+    if use_img2img {
+        payload["init_images"] = json!([reference_base64(&options.reference_images[0])?]);
+        payload["denoising_strength"] =
+            json!(read_f64(defaults.get("denoisingStrength"), 0.55, 0.0, 1.0));
+    }
     if !scheduler.trim().is_empty() {
         payload["scheduler"] = Value::String(scheduler);
     }
@@ -758,10 +1417,16 @@ async fn generate_automatic1111(
             .get_mut("override_settings")
             .and_then(Value::as_object_mut)
             .expect("override_settings is object when present");
-        settings.insert("sd_model_checkpoint".to_string(), Value::String(model.to_string()));
+        settings.insert(
+            "sd_model_checkpoint".to_string(),
+            Value::String(model.to_string()),
+        );
     }
     let response = http_client(180)?
-        .post(format!("{base}/sdapi/v1/txt2img"))
+        .post(format!(
+            "{base}/sdapi/v1/{}",
+            if use_img2img { "img2img" } else { "txt2img" }
+        ))
         .json(&payload)
         .send()
         .await
@@ -782,18 +1447,44 @@ async fn generate_horde(
     prompt: &str,
     width: u64,
     height: u64,
+    options: &ImageGenerationOptions,
 ) -> AppResult<(String, String)> {
     let base = connection_base_url(connection, "horde");
     let api_key = connection_api_key(connection);
     let client = http_client(240)?;
-    let mut request = client.post(format!("{base}/generate/async")).json(&json!({
-        "prompt": prompt,
+    let horde_prompt = match options
+        .negative_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(negative) => format!("{prompt} ### {negative}"),
+        None => prompt.to_string(),
+    };
+    let mut body = json!({
+        "prompt": horde_prompt,
         "params": { "width": width, "height": height, "n": 1 },
         "nsfw": true,
         "trusted_workers": false,
         "slow_workers": true
-    }));
-    request = request.header("apikey", if api_key.trim().is_empty() { "0000000000" } else { &api_key });
+    });
+    if let Some(model) = connection
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        body["models"] = json!([model]);
+    }
+    let mut request = client.post(format!("{base}/generate/async")).json(&body);
+    request = request.header(
+        "apikey",
+        if api_key.trim().is_empty() {
+            "0000000000"
+        } else {
+            &api_key
+        },
+    );
     let submit = response_json(
         request
             .send()
@@ -805,14 +1496,26 @@ async fn generate_horde(
     let id = submit
         .get("id")
         .and_then(Value::as_str)
-        .ok_or_else(|| AppError::new("image_response_error", "Stable Horde did not return a request id"))?
+        .ok_or_else(|| {
+            AppError::new(
+                "image_response_error",
+                "Stable Horde did not return a request id",
+            )
+        })?
         .to_string();
     for _ in 0..120 {
         tokio::time::sleep(Duration::from_secs(2)).await;
         let status = response_json(
             client
                 .get(format!("{base}/generate/status/{id}"))
-                .header("apikey", if api_key.trim().is_empty() { "0000000000" } else { &api_key })
+                .header(
+                    "apikey",
+                    if api_key.trim().is_empty() {
+                        "0000000000"
+                    } else {
+                        &api_key
+                    },
+                )
                 .send()
                 .await
                 .map_err(|error| AppError::new("image_network_error", error.to_string()))?,
@@ -860,12 +1563,14 @@ async fn generate_comfyui(
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(|raw| {
-            serde_json::from_str::<Value>(raw)
-                .map_err(|error| AppError::invalid_input(format!("Invalid ComfyUI workflow JSON: {error}")))
+            serde_json::from_str::<Value>(raw).map_err(|error| {
+                AppError::invalid_input(format!("Invalid ComfyUI workflow JSON: {error}"))
+            })
         })
         .transpose()?
         .unwrap_or_else(|| default_comfyui_workflow(&defaults));
-    let replacements = comfy_replacements(
+    let base = connection_base_url(connection, "comfyui");
+    let mut replacements = comfy_replacements(
         connection,
         &defaults,
         &prompt,
@@ -874,8 +1579,15 @@ async fn generate_comfyui(
         height,
         options.reference_images.first().map(String::as_str),
     );
+    if workflow_contains_token(&workflow, "%reference_image_name%") {
+        if let Some(reference) = options.reference_images.first() {
+            replacements.insert(
+                "%reference_image_name%".to_string(),
+                Value::String(upload_comfy_reference_image(&base, reference).await?),
+            );
+        }
+    }
     let prompt_json = replace_workflow_placeholders(workflow, &replacements);
-    let base = connection_base_url(connection, "comfyui");
     let client = http_client(240)?;
     let response = response_json(
         client
@@ -906,7 +1618,10 @@ async fn generate_comfyui(
         if let Some(image) = find_comfyui_image(&history, &prompt_id) {
             let filename = image.get("filename").and_then(Value::as_str).unwrap_or("");
             let subfolder = image.get("subfolder").and_then(Value::as_str).unwrap_or("");
-            let kind = image.get("type").and_then(Value::as_str).unwrap_or("output");
+            let kind = image
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("output");
             if !filename.is_empty() {
                 let url = format!(
                     "{base}/view?filename={}&subfolder={}&type={}",
@@ -990,14 +1705,23 @@ fn comfy_replacements(
         ("%cfg%".to_string(), json!(defaults.cfg_scale)),
         ("%cfg_scale%".to_string(), json!(defaults.cfg_scale)),
         ("%scale%".to_string(), json!(defaults.cfg_scale)),
-        ("%sampler%".to_string(), Value::String(defaults.sampler.clone())),
-        ("%scheduler%".to_string(), Value::String(defaults.scheduler.clone())),
+        (
+            "%sampler%".to_string(),
+            Value::String(defaults.sampler.clone()),
+        ),
+        (
+            "%scheduler%".to_string(),
+            Value::String(defaults.scheduler.clone()),
+        ),
         ("%denoise%".to_string(), json!(defaults.denoising_strength)),
         (
             "%denoising_strength%".to_string(),
             json!(defaults.denoising_strength),
         ),
-        ("%clip_skip%".to_string(), json!(defaults.clip_skip.unwrap_or(0))),
+        (
+            "%clip_skip%".to_string(),
+            json!(defaults.clip_skip.unwrap_or(0)),
+        ),
     ]);
     if let Some(model) = connection
         .get("model")
@@ -1009,7 +1733,9 @@ fn comfy_replacements(
     if let Some(reference) = reference_image {
         replacements.insert(
             "%reference_image%".to_string(),
-            Value::String(image_data_url(reference)),
+            Value::String(
+                reference_base64(reference).unwrap_or_else(|_| image_data_url(reference)),
+            ),
         );
     }
     replacements
@@ -1021,13 +1747,15 @@ fn replace_workflow_placeholders(value: Value, replacements: &HashMap<String, Va
             if let Some(exact) = replacements.get(&raw) {
                 return exact.clone();
             }
-            let replaced = replacements.iter().fold(raw, |current, (token, replacement)| {
-                let replacement = replacement
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| replacement.to_string());
-                current.replace(token, &replacement)
-            });
+            let replaced = replacements
+                .iter()
+                .fold(raw, |current, (token, replacement)| {
+                    let replacement = replacement
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| replacement.to_string());
+                    current.replace(token, &replacement)
+                });
             Value::String(replaced)
         }
         Value::Array(items) => Value::Array(
@@ -1078,8 +1806,9 @@ async fn generate_runpod_comfyui(
         &defaults.negative_prompt_prefix,
         options.negative_prompt.as_deref(),
     );
-    let workflow = serde_json::from_str::<Value>(workflow)
-        .map_err(|error| AppError::invalid_input(format!("Invalid ComfyUI workflow JSON: {error}")))?;
+    let workflow = serde_json::from_str::<Value>(workflow).map_err(|error| {
+        AppError::invalid_input(format!("Invalid ComfyUI workflow JSON: {error}"))
+    })?;
     let workflow = replace_workflow_placeholders(
         workflow,
         &comfy_replacements(
@@ -1268,12 +1997,13 @@ async fn generate_novelai(
         let refs = options
             .reference_images
             .iter()
-            .map(|image| image_data_url(image))
-            .collect::<Vec<_>>();
+            .map(|image| reference_base64(image))
+            .collect::<AppResult<Vec<_>>>()?;
         parameters["reference_image_multiple"] = json!(refs);
         parameters["reference_information_extracted_multiple"] =
             json!(vec![1; options.reference_images.len()]);
-        parameters["reference_strength_multiple"] = json!(vec![0.6; options.reference_images.len()]);
+        parameters["reference_strength_multiple"] =
+            json!(vec![0.6; options.reference_images.len()]);
     }
     let body = json!({
         "input": prompt,
@@ -1283,9 +2013,7 @@ async fn generate_novelai(
     });
     let client = http_client(300)?;
     let response = bearer(
-        client
-            .post(format!("{base}/ai/generate-image"))
-            .json(&body),
+        client.post(format!("{base}/ai/generate-image")).json(&body),
         &connection_api_key(connection),
     )
     .send()

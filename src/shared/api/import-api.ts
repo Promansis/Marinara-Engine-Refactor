@@ -34,5 +34,4 @@ export const importApi = {
   stBulkRun: <T>(payload: unknown) => importJson<T>("/import/st-bulk/run", payload),
   stBulkRunEvents: (payload: unknown, signal?: AbortSignal) => api.streamEvents("/import/st-bulk/run", payload, signal),
   listDirectory: <T>(path: string) => importJson<T>("/import/list-directory", { path }),
-  pickFolder: <T>() => importJson<T>("/import/pick-folder", {}),
 };

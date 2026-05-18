@@ -144,7 +144,7 @@ function normalizeDraftAttributes(value: unknown) {
 }
 
 function createDraft(gameCard?: GameCharacterSheetGameCard): GameCardDraft {
-  // Stored sheets can contain AI-generated or legacy values, so coerce them before binding to form inputs.
+  // Stored sheets can contain AI-generated values, so coerce them before binding to form inputs.
   const rawGameCard = gameCard as (Record<string, unknown> & { rpgStats?: Record<string, unknown> }) | undefined;
   const rawRpgStats =
     rawGameCard?.rpgStats && typeof rawGameCard.rpgStats === "object" && !Array.isArray(rawGameCard.rpgStats)

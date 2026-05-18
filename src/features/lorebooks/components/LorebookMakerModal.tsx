@@ -9,7 +9,7 @@ import { useConnections } from "../../connections/hooks/use-connections";
 import { useLorebooks, useCreateLorebook, lorebookKeys } from "../hooks/use-lorebooks";
 import { useUIStore } from "../../../shared/stores/ui.store";
 import { Loader2, Wand2, CheckCircle, AlertCircle, ChevronDown, BookOpen, Plus } from "lucide-react";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import type { Lorebook } from "@marinara-engine/shared";
 import { ProfessorMariWorkingWindow } from "../../../shared/components/ui/ProfessorMariWorkingWindow";
 import { generateLorebookMaker } from "../../../engine/generation";

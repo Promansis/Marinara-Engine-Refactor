@@ -198,7 +198,11 @@ fn llm_message_from_value(message: &Value) -> Option<marinara_llm::LlmMessage> {
     if content.is_empty() {
         return None;
     }
-    let role = match message.get("role").and_then(Value::as_str).unwrap_or("user") {
+    let role = match message
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("user")
+    {
         "system" => "system",
         "assistant" => "assistant",
         "tool" => "tool",
@@ -288,7 +292,12 @@ fn generation_abort_requested_since(
     Ok(state
         .storage
         .get("app-settings", &key)?
-        .and_then(|record| record.get("value").and_then(Value::as_str).map(ToOwned::to_owned))
+        .and_then(|record| {
+            record
+                .get("value")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
         .and_then(|value| value.parse::<u128>().ok())
         .is_some_and(|aborted_at| aborted_at >= started_at))
 }

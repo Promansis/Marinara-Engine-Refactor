@@ -1,11 +1,11 @@
-use super::agents::*;
 use super::admin::*;
+use super::agents::*;
 use super::avatars::*;
 use super::backgrounds::*;
 use super::backup::*;
 use super::bot_browser::*;
-use super::chat_presets::*;
 use super::characters::*;
+use super::chat_presets::*;
 use super::chats::*;
 use super::custom_tools::*;
 use super::exports::*;
@@ -216,12 +216,10 @@ pub(crate) async fn route_request(
         ["chats", chat_id, "metadata"] if method == "PATCH" => {
             patch_chat_object_field(state, chat_id, "metadata", body)
         }
-        ["world-state", chat_id] if method == "GET" => {
-            Ok(get_required(state, "chats", chat_id)?
-                .get("gameState")
-                .cloned()
-                .unwrap_or_else(|| json!({})))
-        }
+        ["world-state", chat_id] if method == "GET" => Ok(get_required(state, "chats", chat_id)?
+            .get("gameState")
+            .cloned()
+            .unwrap_or_else(|| json!({}))),
         ["world-state", chat_id] if method == "PATCH" => {
             patch_chat_object_field(state, chat_id, "gameState", body)
         }
@@ -230,9 +228,6 @@ pub(crate) async fn route_request(
         }
         ["chats", chat_id, "generate-summary"] if method == "POST" => {
             generate_summary(state, chat_id, body)
-        }
-        ["chats", chat_id, "backfill-summaries"] if method == "POST" => {
-            backfill_summaries(state, chat_id, body)
         }
         ["chats", chat_id, "autonomous-unread"] if method == "POST" => {
             mark_autonomous_unread(state, chat_id, body)
@@ -356,9 +351,7 @@ pub(crate) async fn route_request(
             prompt_nested_item(state, method, preset_id, nested, nested_id, body)
         }
         ["prompts", id, "duplicate"] if method == "POST" => duplicate_record(state, "prompts", id),
-        ["prompts", id, "set-default"] if method == "POST" => {
-            set_default_prompt(state, id)
-        }
+        ["prompts", id, "set-default"] if method == "POST" => set_default_prompt(state, id),
         ["prompts"] => collection_root(state, method, "prompts", body),
         ["prompts", id] => collection_item_or_action(state, method, "prompts", id, None, body),
         ["lorebooks", "export-bulk"] if method == "POST" => export_lorebooks(state, body),

@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowUpDown, Download, MessageCircle, Pencil, Plus, Search, 
 import { useCharacters } from "../hooks/use-characters";
 import { useStartChatFromCharacter } from "../hooks/use-start-chat-from-character";
 import { getCharacterTitle } from "../lib/character-display";
-import { cn, getAvatarCropStyle } from "../../../shared/lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCrop } from "../../../shared/lib/utils";
 import { useUIStore } from "../../../shared/stores/ui.store";
 
 type CharacterData = Record<string, unknown> & {
@@ -111,8 +111,7 @@ function CharacterLibraryDetailCard({
               alt={characterName || "Selected character"}
               className="h-full w-full object-cover"
               style={getAvatarCropStyle(
-                character.parsed.extensions?.avatarCrop as
-                  | { zoom: number; offsetX: number; offsetY: number }
+                character.parsed.extensions?.avatarCrop as AvatarCrop
                   | undefined,
               )}
             />
@@ -435,8 +434,7 @@ export function CharacterLibraryView() {
                             loading="lazy"
                             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                             style={getAvatarCropStyle(
-                              char.parsed.extensions?.avatarCrop as
-                                | { zoom: number; offsetX: number; offsetY: number }
+                              char.parsed.extensions?.avatarCrop as AvatarCrop
                                 | undefined,
                             )}
                           />

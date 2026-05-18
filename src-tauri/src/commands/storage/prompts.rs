@@ -380,14 +380,11 @@ pub(crate) async fn vectorize_lorebook(
         .get("onlyMissing")
         .and_then(Value::as_bool)
         .unwrap_or(true);
-    let entries = match list_collection(
-        state,
-        "lorebook-entries",
-        Some(("lorebookId", lorebook_id)),
-    )? {
-        Value::Array(rows) => rows,
-        _ => Vec::new(),
-    };
+    let entries =
+        match list_collection(state, "lorebook-entries", Some(("lorebookId", lorebook_id)))? {
+            Value::Array(rows) => rows,
+            _ => Vec::new(),
+        };
     let total = entries
         .iter()
         .filter(|entry| {
@@ -472,7 +469,10 @@ fn lorebook_entry_embedding_text(entry: &Value) -> String {
     [
         entry.get("name").and_then(Value::as_str).unwrap_or(""),
         keys.as_str(),
-        entry.get("description").and_then(Value::as_str).unwrap_or(""),
+        entry
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
         entry.get("content").and_then(Value::as_str).unwrap_or(""),
     ]
     .into_iter()
@@ -526,7 +526,10 @@ async fn embed_openai_compatible(
 }
 
 async fn embed_google(connection: &Value, model: &str, text: &str) -> AppResult<Vec<f64>> {
-    let api_key = connection.get("apiKey").and_then(Value::as_str).unwrap_or("");
+    let api_key = connection
+        .get("apiKey")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let base = embedding_base_url(connection, "https://generativelanguage.googleapis.com");
     let url = format!("{base}/v1beta/models/{model}:embedContent?key={api_key}");
     ensure_embedding_url_allowed(&url)?;
@@ -560,7 +563,10 @@ async fn embed_ollama(connection: &Value, model: &str, text: &str) -> AppResult<
     .await
 }
 
-async fn parse_embedding_response<F>(response: reqwest::Response, extractor: F) -> AppResult<Vec<f64>>
+async fn parse_embedding_response<F>(
+    response: reqwest::Response,
+    extractor: F,
+) -> AppResult<Vec<f64>>
 where
     F: Fn(&Value) -> Option<Vec<f64>>,
 {
@@ -576,13 +582,15 @@ where
             json,
         ));
     }
-    extractor(&json).filter(|embedding| !embedding.is_empty()).ok_or_else(|| {
-        AppError::with_details(
-            "embedding_response_error",
-            "Embedding response did not contain a numeric embedding",
-            json,
-        )
-    })
+    extractor(&json)
+        .filter(|embedding| !embedding.is_empty())
+        .ok_or_else(|| {
+            AppError::with_details(
+                "embedding_response_error",
+                "Embedding response did not contain a numeric embedding",
+                json,
+            )
+        })
 }
 
 fn json_embedding_array(value: &Value) -> Option<Vec<f64>> {

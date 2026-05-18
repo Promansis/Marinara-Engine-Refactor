@@ -1,5 +1,5 @@
 import type { GameState } from "@marinara-engine/shared";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 
 export type WorldState = GameState;
 export type WorldStatePatch = Record<string, unknown>;

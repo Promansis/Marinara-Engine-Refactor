@@ -76,10 +76,10 @@ import {
   History,
   RotateCcw,
 } from "lucide-react";
-import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../../shared/lib/utils";
+import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop } from "../../../shared/lib/utils";
 import { extractColorsFromImage } from "../../../shared/lib/avatar-color-extraction";
 import { HelpTooltip } from "../../../shared/components/ui/HelpTooltip";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { ColorPicker } from "../../../shared/components/ui/ColorPicker";
 import { TrackerCardColorControls } from "../../../shared/components/ui/TrackerCardColorControls";
 import { ExpandedTextarea } from "../../../shared/components/ui/ExpandedTextarea";
@@ -716,7 +716,7 @@ export function CharacterEditor() {
                 src={avatarPreview}
                 alt={formData.name}
                 className="h-full w-full object-cover"
-                style={getAvatarCropStyle(formData.extensions.avatarCrop as AvatarCrop | LegacyAvatarCrop | undefined)}
+                style={getAvatarCropStyle(formData.extensions.avatarCrop as AvatarCrop | undefined)}
               />
             ) : (
               <User size="1.375rem" className="text-white" />
@@ -1196,9 +1196,8 @@ function MetadataTab({
   removeAllTags: () => void;
   avatarPreview: string | null;
 }) {
-  // Read existing crop in either current or legacy shape; the widget handles both
-  // and writes back the current shape on first interaction.
-  const savedCrop = (formData.extensions.avatarCrop as AvatarCrop | LegacyAvatarCrop | undefined) ?? null;
+  // Read the saved source-rectangle crop and write the same current shape on edit.
+  const savedCrop = (formData.extensions.avatarCrop as AvatarCrop | undefined) ?? null;
 
   return (
     <div className="space-y-5">

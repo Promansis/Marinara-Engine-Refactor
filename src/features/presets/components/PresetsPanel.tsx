@@ -7,7 +7,7 @@ import { usePresets, useDeletePreset, useDuplicatePreset, useSetDefaultPreset } 
 import { useUpdateChat, useUpdateChatMetadata } from "../../chats/hooks/use-chats";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { useUIStore } from "../../../shared/stores/ui.store";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { showConfirmDialog } from "../../../shared/lib/app-dialogs";
 import { ChoiceSelectionModal } from "./ChoiceSelectionModal";
 import { Plus, Download, FileText, Trash2, Check, Copy, Search, Code2, Hash, Star } from "lucide-react";

@@ -37,14 +37,14 @@ import {
   RotateCcw,
   Crop,
 } from "lucide-react";
-import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../../shared/lib/utils";
+import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop } from "../../../shared/lib/utils";
 import { showAlertDialog, showConfirmDialog } from "../../../shared/lib/app-dialogs";
 import { extractColorsFromImage } from "../../../shared/lib/avatar-color-extraction";
 import { HelpTooltip } from "../../../shared/components/ui/HelpTooltip";
 import { ColorPicker } from "../../../shared/components/ui/ColorPicker";
 import { TrackerCardColorControls } from "../../../shared/components/ui/TrackerCardColorControls";
 import { ExpandedTextarea } from "../../../shared/components/ui/ExpandedTextarea";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { parseTrackerCardColorConfig, serializeTrackerCardColorConfig } from "../../../shared/lib/tracker-card-colors";
 import {
   useCharacterSprites,
@@ -103,10 +103,8 @@ interface PersonaFormData {
   personaStats: string;
   altDescriptions: AltDescriptionEntry[];
   tags: string[];
-  /** Avatar crop region (parsed from the persona row's JSON-encoded `avatarCrop`).
-   *  May be the current source-relative shape, the legacy zoom+offset shape (held
-   *  through until the user re-edits via the cropper), or null when unset. */
-  avatarCrop: AvatarCrop | LegacyAvatarCrop | null;
+  /** Avatar crop region parsed from the persona row's JSON-encoded `avatarCrop`. */
+  avatarCrop: AvatarCrop | null;
 }
 
 interface PersonaRow {
@@ -180,14 +178,12 @@ export function PersonaEditor() {
       /* ignore */
     }
 
-    let parsedAvatarCrop: AvatarCrop | LegacyAvatarCrop | null = null;
+    let parsedAvatarCrop: AvatarCrop | null = null;
     try {
       const raw = rawPersona.avatarCrop;
       if (raw) {
         const obj = JSON.parse(raw);
-        // Defensive: accept either the current source-relative shape or the
-        // legacy zoom+offset shape. Anything else is silently dropped so a
-        // malformed cell can't break the editor with NaN transforms.
+        // Defensive: malformed crop data is dropped so the editor falls back to defaults.
         if (obj && typeof obj === "object") {
           // Validate geometry — finite, positive, within normalized bounds.
           // Anything malformed is dropped so the editor falls back to defaults
@@ -209,18 +205,6 @@ export function PersonaEditor() {
               srcY: obj.srcY,
               srcWidth: obj.srcWidth,
               srcHeight: obj.srcHeight,
-            };
-          } else if (
-            Number.isFinite(obj.zoom) &&
-            Number.isFinite(obj.offsetX) &&
-            Number.isFinite(obj.offsetY) &&
-            obj.zoom > 0
-          ) {
-            parsedAvatarCrop = {
-              zoom: obj.zoom,
-              offsetX: obj.offsetX,
-              offsetY: obj.offsetY,
-              ...(obj.fullImage ? { fullImage: true } : {}),
             };
           }
         }
@@ -272,8 +256,7 @@ export function PersonaEditor() {
         altDescriptions: JSON.stringify(altDescriptions),
         tags: JSON.stringify(tags),
         trackerCardColors: serializeTrackerCardColorConfig(formData.trackerCardColors),
-        // Persist as JSON string; empty string means "no crop" so the row keeps
-        // the legacy default in render sites.
+        // Persist as JSON string; empty string means "no crop".
         avatarCrop: avatarCrop ? JSON.stringify(avatarCrop) : "",
       });
       setDirty(false);
@@ -1906,7 +1889,7 @@ function DescriptionTab({
 
   // Pass through whichever shape is saved (or null when unset). The widget
   // initializes the cropper from the saved value or a centered max-square.
-  const avatarCrop: AvatarCrop | LegacyAvatarCrop | null = formData.avatarCrop;
+  const avatarCrop: AvatarCrop | null = formData.avatarCrop;
 
   return (
     <div className="space-y-6">

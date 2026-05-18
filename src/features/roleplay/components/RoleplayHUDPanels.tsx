@@ -23,7 +23,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { cn } from "../../../shared/lib/utils";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { useAgentConfigs, useUpdateAgent, type AgentConfigRow } from "../../agents/hooks/use-agents";
 import type {
   CharacterStat,

@@ -6,7 +6,7 @@ import type {
 } from "../../contracts/types/chat.js";
 
 const VALID_KINDS = new Set<ChatSummaryEntryKind>(["rolling"]);
-const VALID_ORIGINS = new Set<ChatSummaryEntryOrigin>(["manual", "automated", "legacy"]);
+const VALID_ORIGINS = new Set<ChatSummaryEntryOrigin>(["manual", "automated"]);
 const VALID_SOURCES = new Set<ChatSummaryEntrySource>(["last", "range", "agent"]);
 
 export const COMPILED_CHAT_SUMMARY_MAX_BYTES = 64 * 1024;
@@ -16,7 +16,6 @@ export type ChatSummaryEntryInput = Partial<ChatSummaryEntry> & {
 };
 
 export interface ChatSummaryEntryNormalizeOptions {
-  legacySummary?: string | null;
   createId?: () => string;
   now?: string;
 }
@@ -111,35 +110,12 @@ export function estimateChatSummaryTokens(content: string): number {
 export function generateChatSummaryEntryTitle(
   entry: Pick<ChatSummaryEntry, "origin" | "sourceMode" | "messageCount" | "rangeStartIndex" | "rangeEndIndex">,
 ): string {
-  if (entry.origin === "legacy") return "Legacy summary";
   if (entry.origin === "automated") return "Automated summary";
   if (entry.sourceMode === "range" && entry.rangeStartIndex && entry.rangeEndIndex) {
     return `Summary messages ${entry.rangeStartIndex}-${entry.rangeEndIndex}`;
   }
   if (entry.messageCount) return `Summary of ${entry.messageCount} messages`;
   return "Manual summary";
-}
-
-export function createLegacyChatSummaryEntry(
-  summary: string | null | undefined,
-  options: ChatSummaryEntryNormalizeOptions = {},
-): ChatSummaryEntry | null {
-  const content = trimString(summary);
-  if (!content) return null;
-  const now = options.now ?? defaultNow();
-  const id = options.createId?.() ?? fallbackId("summary-legacy", content);
-  return {
-    id,
-    kind: "rolling",
-    origin: "legacy",
-    title: "Legacy summary",
-    content,
-    enabled: true,
-    sourceMode: "last",
-    tokenEstimate: estimateChatSummaryTokens(content),
-    createdAt: now,
-    updatedAt: now,
-  };
 }
 
 export function normalizeChatSummaryEntry(
@@ -154,7 +130,7 @@ export function normalizeChatSummaryEntry(
   const now = options.now ?? defaultNow();
   const origin = VALID_ORIGINS.has(value.origin as ChatSummaryEntryOrigin)
     ? (value.origin as ChatSummaryEntryOrigin)
-    : "legacy";
+    : "manual";
   const sourceMode = VALID_SOURCES.has(value.sourceMode as ChatSummaryEntrySource)
     ? (value.sourceMode as ChatSummaryEntrySource)
     : sourceFromOrigin(origin);
@@ -243,11 +219,6 @@ export function normalizeChatSummaryEntries(
       return { ...entry, id: replacementId };
     });
 
-  if (entries.length === 0) {
-    const legacy = createLegacyChatSummaryEntry(options.legacySummary, options);
-    if (legacy) entries.push(legacy);
-  }
-
   return sortChatSummaryEntries(entries);
 }
 
@@ -267,10 +238,7 @@ export function appendChatSummaryEntryToMetadata(
   input: ChatSummaryEntryInput,
   options: ChatSummaryEntryNormalizeOptions = {},
 ): { entry: ChatSummaryEntry; entries: ChatSummaryEntry[]; summary: string | null } {
-  const entries = normalizeChatSummaryEntries(metadata.summaryEntries, {
-    ...options,
-    legacySummary: typeof metadata.summary === "string" ? metadata.summary : null,
-  });
+  const entries = normalizeChatSummaryEntries(metadata.summaryEntries, options);
   const entry = createChatSummaryEntry(input, options);
   const nextEntries = sortChatSummaryEntries([...entries, entry]);
   return {

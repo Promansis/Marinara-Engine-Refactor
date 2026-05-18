@@ -4,6 +4,7 @@
 // Shared daily/weekly summary generation for conversation mode.
 
 import type { DaySummaryEntry, WeekSummaryEntry } from "@marinara-engine/shared";
+import type { LlmGateway, LlmMessage, StorageGateway } from "../../../../capabilities";
 import type { BaseLLMProvider } from "../../../../generation-core/llm/base-provider.js";
 import { stripConversationPromptTimestamps } from "./transcript-sanitize.js";
 
@@ -20,6 +21,16 @@ export interface ConversationSummaryRunResult {
   weekSummaries: Record<string, WeekSummaryEntry>;
   newlyGeneratedDays: Record<string, DaySummaryEntry>;
   newlyConsolidatedWeeks: Record<string, WeekSummaryEntry>;
+  failedDays: Array<{ date: string; error: string }>;
+  failedWeeks: Array<{ weekKey: string; error: string }>;
+  missingDayCount: number;
+  processedDayCount: number;
+  remainingMissingDayCount: number;
+}
+
+export interface ConversationSummaryBackfillResult {
+  generatedDays: string[];
+  consolidatedWeeks: string[];
   failedDays: Array<{ date: string; error: string }>;
   failedWeeks: Array<{ weekKey: string; error: string }>;
   missingDayCount: number;
@@ -45,9 +56,154 @@ interface GenerateMissingConversationSummariesOptions {
   maxMissingDays?: number;
 }
 
+interface RunConversationSummaryBackfillInput {
+  chatId: string;
+  maxMissingDays?: number;
+  connectionId?: string | null;
+}
+
 const DEFAULT_SUMMARY_TIMEOUT_MS = 300_000;
 const DAILY_TRANSCRIPT_CHUNK_CHARS = 32_000;
 const MAX_SUMMARY_CHUNKS_PER_DAY = 12;
+
+type JsonRecord = Record<string, unknown>;
+
+function parseRecord(value: unknown): JsonRecord {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as JsonRecord) : {};
+    } catch {
+      return {};
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return stringArray(parsed);
+    } catch {
+      return value.trim() ? [value] : [];
+    }
+  }
+  return [];
+}
+
+function numberValue(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function extractName(row: JsonRecord | null | undefined, fallback: string): string {
+  if (!row) return fallback;
+  const direct = stringValue(row.name).trim();
+  if (direct) return direct;
+  const data = parseRecord(row.data);
+  return stringValue(data.name).trim() || fallback;
+}
+
+function createSummaryProvider(llm: LlmGateway, connection: JsonRecord): BaseLLMProvider {
+  const connectionId = stringValue(connection.id);
+  const maxTokensOverrideValue = numberValue(connection.maxTokensOverride, NaN);
+  return {
+    maxTokensOverrideValue: Number.isFinite(maxTokensOverrideValue) ? maxTokensOverrideValue : null,
+    async chatComplete(messages, options) {
+      const requestMessages: LlmMessage[] = messages.map((message) => ({
+        role:
+          message.role === "system" || message.role === "assistant" || message.role === "tool"
+            ? message.role
+            : "user",
+        content: String(message.content ?? ""),
+        name: message.name,
+      }));
+      const content = await llm.complete(
+        {
+          connectionId,
+          model: options.model,
+          messages: requestMessages,
+          parameters: {
+            temperature: options.temperature,
+            maxTokens: options.maxTokens,
+          },
+        },
+        options.signal,
+      );
+      return { content };
+    },
+  };
+}
+
+async function resolveSummaryConnection(
+  storage: StorageGateway,
+  chat: JsonRecord,
+  requestedConnectionId?: string | null,
+): Promise<JsonRecord> {
+  const requested = stringValue(requestedConnectionId).trim();
+  if (requested) {
+    const connection = await storage.get<JsonRecord>("connections", requested);
+    if (!connection) throw new Error("Requested summary connection was not found");
+    return connection;
+  }
+  const chatConnectionId = stringValue(chat.connectionId).trim();
+  if (chatConnectionId) {
+    const connection = await storage.get<JsonRecord>("connections", chatConnectionId);
+    if (!connection) throw new Error("Chat summary connection was not found");
+    return connection;
+  }
+  const connections = await storage.list<JsonRecord>("connections");
+  const selected = connections.find((connection) => connection.isDefault === true || connection.default === true) ?? connections[0];
+  if (!selected) throw new Error("No API connection configured for this chat");
+  return selected;
+}
+
+async function loadScopedMessages(storage: StorageGateway, chatId: string): Promise<ConversationSummaryMessage[]> {
+  const rows = await storage.request<unknown>("GET", `/chats/${encodeURIComponent(chatId)}/messages`);
+  const messages = Array.isArray(rows) ? rows.filter((row): row is JsonRecord => !!row && typeof row === "object" && !Array.isArray(row)) : [];
+  let startIndex = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (parseRecord(messages[index]!.extra).isConversationStart === true) {
+      startIndex = index;
+      break;
+    }
+  }
+  return (startIndex > 0 ? messages.slice(startIndex) : messages).map((message) => ({
+    id: stringValue(message.id) || undefined,
+    role: stringValue(message.role) || "assistant",
+    content: typeof message.content === "string" ? message.content : null,
+    characterId: typeof message.characterId === "string" ? message.characterId : null,
+    createdAt: typeof message.createdAt === "string" ? message.createdAt : null,
+  }));
+}
+
+async function loadCharacterNames(storage: StorageGateway, characterIds: string[]): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  for (const characterId of characterIds) {
+    const row = await storage.get<JsonRecord>("characters", characterId).catch(() => null);
+    names.set(characterId, extractName(row, "Character"));
+  }
+  return names;
+}
+
+async function loadPersonaName(storage: StorageGateway, chat: JsonRecord): Promise<string> {
+  const personaId = stringValue(chat.personaId).trim();
+  if (personaId) {
+    const persona = await storage.get<JsonRecord>("personas", personaId).catch(() => null);
+    return extractName(persona, "User");
+  }
+  const personas = await storage.list<JsonRecord>("personas").catch(() => []);
+  return extractName(
+    personas.find((persona) => persona.isActive === true || persona.isActive === "true"),
+    "User",
+  );
+}
 
 function coerceSummaryEntry(value: unknown): DaySummaryEntry | null {
   if (typeof value === "string") {
@@ -425,5 +581,56 @@ export async function generateMissingConversationSummaries(
     missingDayCount: missingBuckets.length,
     processedDayCount: bucketsToProcess.length,
     remainingMissingDayCount: Math.max(0, missingBuckets.length - bucketsToProcess.length),
+  };
+}
+
+export async function backfillConversationSummaries(
+  capabilities: { storage: StorageGateway; llm: LlmGateway },
+  input: RunConversationSummaryBackfillInput,
+): Promise<ConversationSummaryBackfillResult> {
+  const chat = await capabilities.storage.get<JsonRecord>("chats", input.chatId);
+  if (!chat) throw new Error("Chat not found");
+  if (chat.mode !== "conversation") {
+    return {
+      generatedDays: [],
+      consolidatedWeeks: [],
+      failedDays: [],
+      failedWeeks: [],
+      missingDayCount: 0,
+      processedDayCount: 0,
+      remainingMissingDayCount: 0,
+    };
+  }
+
+  const metadata = parseRecord(chat.metadata);
+  const maxMissingDays = Math.max(1, Math.min(60, Math.floor(numberValue(input.maxMissingDays, 14))));
+  const connection = await resolveSummaryConnection(capabilities.storage, chat, input.connectionId);
+  const characterIds = stringArray(chat.characterIds);
+  const result = await generateMissingConversationSummaries({
+    messages: await loadScopedMessages(capabilities.storage, input.chatId),
+    metadata,
+    provider: createSummaryProvider(capabilities.llm, connection),
+    model: stringValue(connection.model),
+    personaName: await loadPersonaName(capabilities.storage, chat),
+    charIdToName: await loadCharacterNames(capabilities.storage, characterIds),
+    rolloverHour: Math.max(0, Math.min(11, Math.floor(numberValue(metadata.dayRolloverHour, 4)))),
+    maxMissingDays,
+  });
+
+  if (Object.keys(result.newlyGeneratedDays).length > 0 || Object.keys(result.newlyConsolidatedWeeks).length > 0) {
+    await capabilities.storage.request("PATCH", `/chats/${encodeURIComponent(input.chatId)}/summaries`, {
+      daySummaries: result.newlyGeneratedDays,
+      weekSummaries: result.newlyConsolidatedWeeks,
+    });
+  }
+
+  return {
+    generatedDays: Object.keys(result.newlyGeneratedDays),
+    consolidatedWeeks: Object.keys(result.newlyConsolidatedWeeks),
+    failedDays: result.failedDays,
+    failedWeeks: result.failedWeeks,
+    missingDayCount: result.missingDayCount,
+    processedDayCount: result.processedDayCount,
+    remainingMissingDayCount: result.remainingMissingDayCount,
   };
 }

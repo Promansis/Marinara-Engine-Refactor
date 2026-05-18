@@ -725,6 +725,10 @@ body {
 }
 
 @media (max-width: 767px) {
+  .mari-window-titlebar {
+    display: none;
+  }
+
   .mari-title-brand {
     display: none;
   }
@@ -2426,8 +2430,11 @@ summary[class*="cursor-pointer"],
     background:
       linear-gradient(var(--background), var(--background)) content-box,
       linear-gradient(
+          to bottom,
           color-mix(in srgb, var(--card) 80%, transparent),
-          color-mix(in srgb, var(--card) 80%, transparent)
+          color-mix(in srgb, var(--card) 80%, transparent) calc(100% - env(safe-area-inset-bottom)),
+          var(--background) calc(100% - env(safe-area-inset-bottom)),
+          var(--background)
         )
         border-box !important;
   }

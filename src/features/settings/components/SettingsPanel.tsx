@@ -13,7 +13,7 @@ import {
 import { cn } from "../../../shared/lib/utils";
 import { useExtensions, useCreateExtension, useDeleteExtension, useUpdateExtension } from "../hooks/use-extensions";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ADMIN_SECRET_STORAGE_KEY, ApiError, api } from "../../../shared/lib/api-client";
+import { ADMIN_SECRET_STORAGE_KEY, ApiError, api } from "../../../shared/api/api-client";
 import { backupApi } from "../../../shared/api/backup-api";
 import { importApi } from "../../../shared/api/import-api";
 import { chatBackgroundMetadataToUrl, chatBackgroundUrlToMetadata } from "../../../shared/lib/backgrounds";

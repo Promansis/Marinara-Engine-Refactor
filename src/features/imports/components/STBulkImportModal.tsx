@@ -2,6 +2,7 @@
 // Modal: SillyTavern Bulk Import
 // ──────────────────────────────────────────────
 import { useState, useCallback } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Modal } from "../../../shared/components/ui/Modal";
 import {
   FolderSearch,
@@ -24,7 +25,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../../shared/lib/utils";
-import { ApiError } from "../../../shared/lib/api-client";
+import { ApiError } from "../../../shared/api/api-client";
 import { importApi } from "../../../shared/api/import-api";
 
 interface Props {
@@ -257,21 +258,31 @@ export function STBulkImportModal({ open, onClose }: Props) {
     setPicking(true);
     setError("");
     try {
-      const data = await importApi.pickFolder<{
-        success: boolean;
-        path?: string;
-        folderToken?: string;
-        error?: string;
-      }>();
-      if (data?.success && data.path) {
+      const selected = await openDialog({ directory: true, multiple: false });
+      if (typeof selected === "string" && selected.trim()) {
+        const data = await importApi.listDirectory<{
+          success: boolean;
+          path?: string;
+          folderToken?: string;
+          folders?: string[];
+          error?: string;
+        }>(selected);
+        if (!data?.success || !data.path) {
+          setError(`Unable to list directories${data?.error ? `: ${data.error}` : ""}`);
+          setShowFolderBrowser(true);
+          setPicking(false);
+          loadDirectory(folderPath || undefined);
+          return;
+        }
         setFolderPath(data.path);
         setFolderToken(data.folderToken ?? null);
+        setBrowserPath(data.path);
+        setBrowserFolders(data.folders ?? []);
         setPicking(false);
         return;
       }
-      if (data?.error) setError(`Unable to open folder picker: ${data.error}`);
-    } catch {
-      // Native picker failed — fall back to browser below
+    } catch (err) {
+      setError(describeImportError(err, "Unable to open folder picker"));
     }
     setPicking(false);
     setShowFolderBrowser(true);

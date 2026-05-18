@@ -87,7 +87,7 @@ import {
   useClearChatNotes,
   chatKeys,
 } from "../../chats/hooks/use-chats";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { generateConversationSchedules as runGenerateConversationSchedules } from "../../../engine/modes/chat/schedules/schedule.service";
 import { llmApi } from "../../../shared/api/llm-api";
 import { storageApi } from "../../../shared/api/storage-api";

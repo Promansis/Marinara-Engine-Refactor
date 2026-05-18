@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Dices, Loader2, Pencil, Sparkles, X } from "lucide-react";
-import { useUpdateMessageExtra } from "../../conversation/hooks/use-conversation-data";
+import { useUpdateMessageExtra } from "../../chats/hooks/use-chats";
 import { useAgentStore } from "../../../shared/stores/agent.store";
 import { useGenerate } from "../../generation/hooks/use-generate";
 import { useChatStore } from "../../../shared/stores/chat.store";

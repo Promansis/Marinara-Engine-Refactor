@@ -1,4 +1,4 @@
-import { api } from "./api-client";
+import { api } from "../api/api-client";
 import { useTranslationStore } from "../stores/translation.store";
 
 /** Standalone translate helper for on-demand translation flows. */

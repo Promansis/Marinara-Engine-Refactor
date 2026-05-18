@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { chatKeys, useCreateChat } from "../../chats/hooks/use-chats";
 import { useApplyChatPreset, useChatPresets } from "../../chat-presets/hooks/use-chat-presets";

@@ -2,9 +2,10 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { retryGenerationAgents, startGeneration } from "../../../engine/generation";
+import { backfillConversationSummaries } from "../../../engine/modes/chat";
 import { llmApi } from "../../../shared/api/llm-api";
 import { storageApi } from "../../../shared/api/storage-api";
-import { ApiError } from "../../../shared/lib/api-client";
+import { ApiError } from "../../../shared/api/api-client";
 import { useAgentStore } from "../../../shared/stores/agent.store";
 import { useChatStore } from "../../../shared/stores/chat.store";
 
@@ -40,6 +41,12 @@ export function useGenerate() {
 
       let received = "";
       try {
+        await backfillConversationSummaries(
+          { storage: storageApi, llm: llmApi },
+          { chatId, connectionId: typeof args.connectionId === "string" ? args.connectionId : null, maxMissingDays: 2 },
+        ).catch(() => {
+          // Summary refresh should never block an otherwise valid generation.
+        });
         for await (const event of startGeneration(
           { storage: storageApi, llm: llmApi },
           args,

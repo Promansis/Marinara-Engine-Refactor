@@ -4,7 +4,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { previewGenerationPrompt } from "../../../engine/generation";
 import { storageApi } from "../../../shared/api/storage-api";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import type {
   PromptPreset,
   PromptGroup,

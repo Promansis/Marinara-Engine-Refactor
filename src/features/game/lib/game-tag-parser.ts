@@ -21,11 +21,7 @@ export interface CombatEncounterTag {
     /** Element the enemy attacks with (for elemental reaction chains) */
     element?: string;
   }>;
-  /**
-   * Names of allies who should join the player side. `undefined` means the GM
-   * used the legacy format, so the engine falls back to the configured party.
-   * `null` means the GM explicitly requested no extra allies.
-   */
+  /** Names of allies who should join the player side. `null` means no extra allies. */
   allies?: string[] | null;
 }
 
@@ -591,7 +587,6 @@ export function parseSegmentInventoryUpdates(content: string): SegmentInventoryU
     .replace(/\[status:\s*[^\]]+\]/gi, "")
     .replace(/\[element_attack:\s*[^\]]+\]/gi, "")
     .replace(/\[party_change:\s*[^\]]+\]/gi, "")
-    .replace(/\[party_add:\s*[^\]]+\]/gi, "")
     .replace(/\[party-turn\]/gi, "")
     .replace(/\[party-chat\]/gi, "")
     .replace(/\[dice:\s*[^\]]+\]/gi, "");
@@ -996,15 +991,6 @@ export function parseGmTags(content: string): ParsedGmTags {
   }
   text = text.replace(/\[party_change:\s*[^\]]+\]/gi, "");
 
-  // [party_add: character="Name"] — legacy alias for party_change add
-  const partyAddRegex = /\[party_add:\s*([^\]]+)\]/gi;
-  let partyAddMatch: RegExpExecArray | null;
-  while ((partyAddMatch = partyAddRegex.exec(text)) !== null) {
-    const update = parsePartyChangeTagBody(partyAddMatch[1] ?? "", "add");
-    if (update) result.partyChanges.push(update);
-  }
-  text = text.replace(/\[party_add:\s*[^\]]+\]/gi, "");
-
   // [Note: content] or [Book: content] — readable documents (balanced brackets)
   {
     const { contents: noteContents, remaining: afterNotes } = extractBalancedTags(text, "[Note:");
@@ -1055,7 +1041,6 @@ export function stripGmTags(content: string): string {
     .replace(/\[element_attack:\s*[^\]]+\]/gi, "")
     .replace(/\[inventory:\s*[^\]]+\]/gi, "")
     .replace(/\[party_change:\s*[^\]]+\]/gi, "")
-    .replace(/\[party_add:\s*[^\]]+\]/gi, "")
     .replace(/\[party-turn\]/gi, "")
     .replace(/\[party-chat\]/gi, "")
     .replace(/\[dice:\s*[^\]]+\]/gi, "");
@@ -1097,7 +1082,6 @@ export function stripGmTagsKeepReadables(content: string): string {
     .replace(/\[element_attack:\s*[^\]]+\]/gi, "")
     .replace(/\[inventory:\s*[^\]]+\]/gi, "")
     .replace(/\[party_change:\s*[^\]]+\]/gi, "")
-    .replace(/\[party_add:\s*[^\]]+\]/gi, "")
     .replace(/\[party-turn\]/gi, "")
     .replace(/\[party-chat\]/gi, "")
     .replace(/\[dice:\s*[^\]]+\]/gi, "");

@@ -312,7 +312,7 @@ export function TTSConfigCard() {
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   // Voice fetch — keyed on the *saved* baseUrl so it only refetches when saved
-  const savedSource = savedConfig?.source ?? "openai";
+  const savedSource: TTSSource = savedConfig?.source ?? "openai";
   const {
     data: voicesData,
     isFetching: fetchingVoices,
@@ -484,8 +484,9 @@ export function TTSConfigCard() {
     })();
   };
 
-  const voices = voicesData?.voices ?? [];
-  const voiceOptions = voicesData?.voiceOptions ?? voices.map((v) => ({ id: v, name: v }));
+  const voices: string[] = voicesData?.voices ?? [];
+  const voiceOptions: VoiceOption[] =
+    voicesData?.voiceOptions ?? voices.map((voiceId): VoiceOption => ({ id: voiceId, name: voiceId }));
   const voicesFromProvider = voicesData?.fromProvider ?? false;
   const elevenLabsMatchedMaleVoiceOptions = useMemo(
     () =>

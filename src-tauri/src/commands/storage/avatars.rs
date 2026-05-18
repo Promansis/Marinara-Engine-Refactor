@@ -34,7 +34,13 @@ pub(crate) fn update_npc_avatar(state: &AppState, chat_id: &str, body: Value) ->
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("npc")
         .to_string();
-    let stored = persist_image_upload(state, "avatars/npc", &format!("{chat_id}-{name}"), &body, "avatar")?;
+    let stored = persist_image_upload(
+        state,
+        "avatars/npc",
+        &format!("{chat_id}-{name}"),
+        &body,
+        "avatar",
+    )?;
     Ok(json!({
         "chatId": chat_id,
         "name": name,

@@ -15,7 +15,7 @@ import {
 } from "../hooks/use-characters";
 import { useUpdateChat, useCreateMessage, chatKeys } from "../../chats/hooks/use-chats";
 import { useStartChatFromCharacter } from "../hooks/use-start-chat-from-character";
-import { api } from "../api/characters-api";
+import { api } from "../../../shared/api/api-client";
 import { showConfirmDialog } from "../../../shared/lib/app-dialogs";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { ContextMenu, type ContextMenuItem } from "../../../shared/components/ui/ContextMenu";
@@ -47,7 +47,7 @@ import {
 } from "lucide-react";
 import { getCharacterTitle } from "../lib/character-display";
 import { useUIStore } from "../../../shared/stores/ui.store";
-import { cn, getAvatarCropStyle } from "../../../shared/lib/utils";
+import { cn, getAvatarCropStyle, type AvatarCrop } from "../../../shared/lib/utils";
 import { ExportFormatDialog, type ExportFormatChoice } from "../../../shared/components/ui/ExportFormatDialog";
 
 type CharacterRow = {
@@ -1128,8 +1128,7 @@ export function CharactersPanel() {
                       alt={charName}
                       className="h-full w-full object-cover"
                       style={getAvatarCropStyle(
-                        char.parsed.extensions?.avatarCrop as
-                          | { zoom: number; offsetX: number; offsetY: number }
+                        char.parsed.extensions?.avatarCrop as AvatarCrop
                           | undefined,
                       )}
                     />

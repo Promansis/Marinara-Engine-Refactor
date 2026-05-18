@@ -4,7 +4,7 @@
 import { useState, useEffect } from "react";
 import { Modal } from "../../../shared/components/ui/Modal";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { useConnections } from "../../connections/hooks/use-connections";
 import { Loader2, Sparkles, Save } from "lucide-react";
 import { type AgentPhase } from "@marinara-engine/shared";
@@ -32,10 +32,6 @@ const PHASE_OPTIONS: { value: AgentPhase; label: string }[] = [
   { value: "parallel", label: "Parallel" },
   { value: "post_processing", label: "Post-Processing" },
 ];
-
-function isRemovedLocalRuntimeConnectionId(value: string | null | undefined): boolean {
-  return value === "__local_sidecar__" || value === "sidecar:local" || value?.startsWith("sidecar:") === true;
-}
 
 export function EditAgentModal({ open, onClose, agent }: Props) {
   const qc = useQueryClient();
@@ -92,7 +88,7 @@ export function EditAgentModal({ open, onClose, agent }: Props) {
       name: form.name,
       description: form.description,
       phase: form.phase,
-      connectionId: isRemovedLocalRuntimeConnectionId(form.connectionId) ? null : form.connectionId || null,
+      connectionId: form.connectionId || null,
       promptTemplate: form.promptTemplate,
     };
 
@@ -180,9 +176,7 @@ export function EditAgentModal({ open, onClose, agent }: Props) {
             ))}
           </select>
           <span className="text-[0.625rem] text-[var(--muted-foreground)]">
-            {isRemovedLocalRuntimeConnectionId(form.connectionId)
-              ? "This agent was using a deferred local model option. Pick a configured connection before saving."
-              : "Leave empty to use the default agent connection or the chat connection."}
+            Leave empty to use the default agent connection or the chat connection.
           </span>
         </label>
 

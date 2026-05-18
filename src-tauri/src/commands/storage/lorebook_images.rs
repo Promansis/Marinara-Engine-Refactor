@@ -5,7 +5,11 @@ use super::*;
 
 const LOREBOOK_IMAGE_PREFIX: &str = "marinara-lorebook-image:";
 
-pub(crate) fn update_lorebook_image(state: &AppState, lorebook_id: &str, body: Value) -> AppResult<Value> {
+pub(crate) fn update_lorebook_image(
+    state: &AppState,
+    lorebook_id: &str,
+    body: Value,
+) -> AppResult<Value> {
     get_required_lorebook(state, lorebook_id)?;
     let stored = persist_image_upload(state, "lorebooks/images", lorebook_id, &body, "image")?;
     state.storage.patch(
@@ -20,9 +24,16 @@ pub(crate) fn update_lorebook_image(state: &AppState, lorebook_id: &str, body: V
     )
 }
 
-pub(crate) fn lorebook_image_file_path(state: &AppState, encoded_filename: &str) -> AppResult<Value> {
+pub(crate) fn lorebook_image_file_path(
+    state: &AppState,
+    encoded_filename: &str,
+) -> AppResult<Value> {
     let filename = safe_filename(&decode_path(encoded_filename));
-    let path = state.data_dir.join("lorebooks").join("images").join(filename);
+    let path = state
+        .data_dir
+        .join("lorebooks")
+        .join("images")
+        .join(filename);
     if !path.exists() || !path.is_file() {
         return Err(AppError::not_found("Lorebook image was not found"));
     }

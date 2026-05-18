@@ -2,7 +2,7 @@
 // Hook: Haptic Feedback (Buttplug.io / Intiface Central)
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../shared/lib/api-client";
+import { api } from "../../shared/api/api-client";
 import type { HapticStatus, HapticDeviceCommand } from "@marinara-engine/shared";
 
 const HAPTIC_KEY = ["haptic", "status"] as const;

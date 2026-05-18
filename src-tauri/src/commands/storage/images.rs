@@ -4,7 +4,8 @@ use super::*;
 mod providers;
 
 pub(crate) use providers::{
-    generate_image_with_connection, generate_image_with_options, ImageGenerationOptions,
+    generate_image_with_connection, generate_image_with_options, is_openai_gpt_image_model,
+    ImageGenerationOptions,
 };
 
 pub(crate) fn avatar_generation_prompt_id(name: &str) -> String {
@@ -121,6 +122,12 @@ pub(crate) fn image_generation_options(body: &Value) -> ImageGenerationOptions {
     ImageGenerationOptions {
         negative_prompt,
         reference_images,
+        transparent_background: body
+            .get("transparentBackground")
+            .or_else(|| body.get("transparent_background"))
+            .or_else(|| body.get("nativeTransparentPng"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     }
 }
 
@@ -159,8 +166,14 @@ pub(crate) async fn avatar_generation(state: &AppState, body: Value) -> AppResul
         prompt_override(&body, &prompt_id).unwrap_or_else(|| avatar_generation_prompt(&body));
     let width = image_dimension(&body, "width", 768);
     let height = image_dimension(&body, "height", 1024);
-    let (base64, mime_type) =
-        generate_image_with_options(&connection, &prompt, width, height, image_generation_options(&body)).await?;
+    let (base64, mime_type) = generate_image_with_options(
+        &connection,
+        &prompt,
+        width,
+        height,
+        image_generation_options(&body),
+    )
+    .await?;
     Ok(json!({
         "image": format!("data:{mime_type};base64,{base64}"),
         "prompt": prompt
@@ -173,8 +186,14 @@ pub(crate) async fn generate_image(state: &AppState, body: Value) -> AppResult<V
     let width = image_dimension(&body, "width", 1024);
     let height = image_dimension(&body, "height", 1024);
     let connection = get_required(state, "connections", &connection_id)?;
-    let (base64, mime_type) =
-        generate_image_with_options(&connection, &prompt, width, height, image_generation_options(&body)).await?;
+    let (base64, mime_type) = generate_image_with_options(
+        &connection,
+        &prompt,
+        width,
+        height,
+        image_generation_options(&body),
+    )
+    .await?;
     Ok(json!({
         "base64": base64,
         "mimeType": mime_type,

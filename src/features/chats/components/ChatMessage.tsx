@@ -5,7 +5,6 @@ import {
   cn,
   copyToClipboard,
   getAvatarCropStyle,
-  isLegacyAvatarCrop,
   parseAvatarCropJson,
   type AvatarCropValue,
 } from "../../../shared/lib/utils";
@@ -43,7 +42,7 @@ import { useApplyRegex } from "../../../shared/hooks/use-apply-regex";
 import { useUIStore } from "../../../shared/stores/ui.store";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { useTranslate } from "../../../shared/hooks/use-translate";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { ttsService } from "../../../shared/lib/tts-service";
 import { useTTSConfig } from "../../../shared/hooks/use-tts";
 import { buildTTSMessageText, resolveTTSVoiceForSpeaker } from "../../../shared/lib/tts-dialogue";
@@ -1161,7 +1160,7 @@ export const ChatMessage = memo(function ChatMessage({
     ? "h-[calc(3.5rem*var(--roleplay-avatar-scale))] w-[calc(2.75rem*var(--roleplay-avatar-scale))] rounded-xl"
     : "h-[calc(2.5rem*var(--roleplay-avatar-scale))] w-[calc(2.5rem*var(--roleplay-avatar-scale))] rounded-full";
   // RP rectangle avatars (compact "rectangles" style and the larger glued
-  // panel) can't apply the new source-rectangle crop format directly — that
+  // panel) can't apply the source-rectangle crop format directly — that
   // format renders the <img> with position: absolute and non-aspect-preserving
   // width/height, which stretches when forced into a rectangle whose aspect
   // ratio differs from the (square) crop. Bypass the crop entirely for new
@@ -1170,14 +1169,11 @@ export const ChatMessage = memo(function ChatMessage({
   // short message the glued panel becomes a wide rectangle — `object-cover`
   // against a tall source then crops the top off and 50%/50% (or any centered
   // focal point on a top-of-source face) lands on chin/chest instead of face.
-  // Legacy {zoom, offsetX, offsetY} crops compose fine with object-cover
-  // (they're a CSS transform) so they pass through unchanged.
   const rectangleSafeCropStyle = (
     crop: AvatarCropValue | null | undefined,
     fallback: React.CSSProperties,
   ): React.CSSProperties => {
     if (!crop) return fallback;
-    if (isLegacyAvatarCrop(crop)) return fallback;
     return {};
   };
   const compactAvatarCrop: AvatarCropValue | null = isUser

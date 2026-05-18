@@ -1,8 +1,12 @@
-use super::images::{generate_image_with_options, image_generation_options, prompt_override};
+use super::images::{
+    generate_image_with_options, image_generation_options, is_openai_gpt_image_model,
+    prompt_override,
+};
 use super::shared::*;
 use super::*;
 
-use image::{DynamicImage, GenericImageView, ImageFormat, Rgba};
+use image::{DynamicImage, GenericImageView, ImageFormat, Rgba, RgbaImage};
+use std::collections::VecDeque;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
@@ -16,6 +20,8 @@ struct SpritePlan {
     cols: u32,
     rows: u32,
     sprite_type: String,
+    generate_individually: bool,
+    model: String,
     prompt: String,
     sheet_width: u32,
     sheet_height: u32,
@@ -43,14 +49,21 @@ pub(crate) async fn generate_sprite_sheet_preview(
     body: Value,
 ) -> AppResult<Value> {
     validate_sprite_generation_body(state, &body)?;
-    let plan = build_sprite_plan(&body);
+    let connection_id = required_string(&body, "connectionId")?;
+    let connection = get_required(state, "connections", connection_id)?;
+    let plan = build_sprite_plan(&body, Some(&connection));
     if plan.should_generate_individually() {
         let items = plan
             .expressions
             .iter()
             .map(|expression| {
-                let prompt =
-                    single_sprite_prompt(&plan.sprite_type, &plan.appearance, expression, &body);
+                let prompt = single_sprite_prompt(
+                    &plan.sprite_type,
+                    &plan.appearance,
+                    expression,
+                    &body,
+                    &plan.model,
+                );
                 json!({
                     "id": sprite_prompt_review_id("expression", &plan.sprite_type, expression),
                     "kind": "sprite",
@@ -84,12 +97,9 @@ pub(crate) async fn generate_sprite_sheet(state: &AppState, body: Value) -> AppR
     let connection_id = required_string(&body, "connectionId")?;
     let connection = get_required(state, "connections", connection_id)?;
     let image_options = image_generation_options(&body);
-    let plan = build_sprite_plan(&body);
-    let reference_note = body
-        .get("referenceImages")
-        .and_then(Value::as_array)
-        .filter(|items| !items.is_empty())
-        .map(|_| " Use the provided reference image(s) to preserve face, hair, body, outfit, colors, and distinctive features.")
+    let plan = build_sprite_plan(&body, Some(&connection));
+    let reference_note = (!image_options.reference_images.is_empty())
+        .then_some(" Use the provided reference image(s) to preserve face, hair, body, outfit, colors, and distinctive features.")
         .unwrap_or("");
 
     if plan.should_generate_individually() {
@@ -98,7 +108,13 @@ pub(crate) async fn generate_sprite_sheet(state: &AppState, body: Value) -> AppR
         for expression in &plan.expressions {
             let prompt_id = sprite_prompt_review_id("expression", &plan.sprite_type, expression);
             let prompt = prompt_override(&body, &prompt_id).unwrap_or_else(|| {
-                single_sprite_prompt(&plan.sprite_type, &plan.appearance, expression, &body)
+                single_sprite_prompt(
+                    &plan.sprite_type,
+                    &plan.appearance,
+                    expression,
+                    &body,
+                    &plan.model,
+                )
             });
             match generate_image_with_options(
                 &connection,
@@ -107,7 +123,7 @@ pub(crate) async fn generate_sprite_sheet(state: &AppState, body: Value) -> AppR
                 1024,
                 image_options.clone(),
             )
-                .await
+            .await
             {
                 Ok((base64, _mime_type)) => {
                     let base64 = if body
@@ -449,13 +465,11 @@ fn validate_sprite_generation_body(state: &AppState, body: &Value) -> AppResult<
 
 impl SpritePlan {
     fn should_generate_individually(&self) -> bool {
-        self.sprite_type != "full-body"
-            || self.expressions.len() == 1
-            || self.cols == 1 && self.rows == 1
+        self.generate_individually
     }
 }
 
-fn build_sprite_plan(body: &Value) -> SpritePlan {
+fn build_sprite_plan(body: &Value, connection: Option<&Value>) -> SpritePlan {
     let cols = body
         .get("cols")
         .and_then(Value::as_u64)
@@ -486,8 +500,18 @@ fn build_sprite_plan(body: &Value) -> SpritePlan {
         .unwrap_or("")
         .trim()
         .to_string();
+    let model = connection
+        .and_then(|value| value.get("model"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let single_portrait =
+        sprite_type != "full-body" && expressions.len() == 1 && cols == 1 && rows == 1;
+    let single_full_body =
+        sprite_type == "full-body" && expressions.len() == 1 && cols == 1 && rows == 1;
+    let generate_individually =
+        sprite_type != "full-body" && !single_portrait && is_openai_gpt_image_model(model);
     let (sheet_width, sheet_height, cell_width, cell_height) =
-        resolve_canvas(cols, rows, &sprite_type);
+        resolve_canvas(cols, rows, &sprite_type, model);
     let prompt = if full_body_expression_mode {
         full_body_expression_sheet_prompt(
             cols,
@@ -499,11 +523,12 @@ fn build_sprite_plan(body: &Value) -> SpritePlan {
             cell_width,
             cell_height,
         )
-    } else if sprite_type == "full-body" && expressions.len() == 1 && cols == 1 && rows == 1 {
+    } else if single_full_body {
         single_full_body_prompt(
             &appearance,
             expressions.first().map(String::as_str).unwrap_or("idle"),
             body,
+            model,
         )
     } else if sprite_type == "full-body" {
         full_body_sheet_prompt(
@@ -516,36 +541,62 @@ fn build_sprite_plan(body: &Value) -> SpritePlan {
             cell_width,
             cell_height,
         )
-    } else if expressions.len() == 1 && cols == 1 && rows == 1 {
+    } else if single_portrait {
         single_portrait_prompt(
             &appearance,
             expressions.first().map(String::as_str).unwrap_or("neutral"),
             body,
+            model,
         )
     } else {
-        expression_sheet_prompt(cols, rows, &expressions, &appearance, body)
+        expression_sheet_prompt(cols, rows, &expressions, &appearance, body, model)
     };
+    let prompt = transparent_prompt(prompt, body, model);
     SpritePlan {
         expressions,
         appearance,
         cols,
         rows,
         sprite_type,
+        generate_individually,
+        model: model.to_string(),
         prompt,
         sheet_width,
         sheet_height,
     }
 }
 
-fn resolve_canvas(cols: u32, rows: u32, sprite_type: &str) -> (u32, u32, u32, u32) {
+fn resolve_canvas(cols: u32, rows: u32, sprite_type: &str, model: &str) -> (u32, u32, u32, u32) {
     let cell_width = 512;
     let cell_height = if sprite_type == "full-body" { 768 } else { 512 };
-    (
-        cols * cell_width,
-        rows * cell_height,
-        cell_width,
-        cell_height,
-    )
+    let requested_width = cols * cell_width;
+    let requested_height = rows * cell_height;
+    if is_openai_gpt_image_model(model) {
+        let ratio = requested_width as f64 / requested_height.max(1) as f64;
+        let (sheet_width, sheet_height) = if ratio > 1.12 {
+            (1536, 1024)
+        } else if ratio < 0.88 {
+            (1024, 1536)
+        } else {
+            (1024, 1024)
+        };
+        return (
+            sheet_width,
+            sheet_height,
+            sheet_width / cols.max(1),
+            sheet_height / rows.max(1),
+        );
+    }
+    (requested_width, requested_height, cell_width, cell_height)
+}
+
+fn format_sprite_label_for_prompt(label: &str) -> String {
+    label.trim().replace(['_', '-'], " ")
+}
+
+fn is_gpt_image_2_model(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    lower == "gpt-image-2" || lower.starts_with("gpt-image-2-")
 }
 
 fn expression_sheet_prompt(
@@ -554,21 +605,29 @@ fn expression_sheet_prompt(
     expressions: &[String],
     appearance: &str,
     body: &Value,
+    model: &str,
 ) -> String {
+    let expression_list = expressions
+        .iter()
+        .map(|expression| format_sprite_label_for_prompt(expression))
+        .collect::<Vec<_>>()
+        .join(", ");
     let prompt = format!(
         "character expression sprite sheet source image, designed to be sliced into cells, EXACTLY {} total portrait cells and every cell must be filled, strict {cols} columns by {rows} rows grid, no extra rows, no extra columns, no extra panels, solid white background, thin straight borders or clean gutters separating every cell, same character in every cell, same outfit, same camera distance, same lighting, consistent art style, expressions left-to-right top-to-bottom, one cell per expression, no duplicates and none missing: {}, {appearance}, each cell shows one head-and-shoulders portrait with the requested facial expression, centered with no cropping, no text, no labels, no numbers, no captions, no watermark",
         expressions.len(),
-        expressions.join(", ")
+        expression_list
     );
-    transparent_prompt(prompt, body)
+    transparent_prompt(prompt, body, model)
 }
 
-fn single_portrait_prompt(appearance: &str, expression: &str, body: &Value) -> String {
-    transparent_prompt(format!("single character portrait sprite, one character only, head and shoulders portrait, centered in frame, no cropping, solid white studio background, {appearance}, facial expression: {expression}, anime/game sprite style, consistent character design, no grid, no panel borders, no text, no labels, no watermark"), body)
+fn single_portrait_prompt(appearance: &str, expression: &str, body: &Value, model: &str) -> String {
+    let expression = format_sprite_label_for_prompt(expression);
+    transparent_prompt(format!("single character portrait sprite, one character only, head and shoulders portrait, centered in frame, no cropping, solid white studio background, {appearance}, facial expression: {expression}, anime/game sprite style, consistent character design, no grid, no panel borders, no text, no labels, no watermark"), body, model)
 }
 
-fn single_full_body_prompt(appearance: &str, pose: &str, body: &Value) -> String {
-    transparent_prompt(format!("single full-body character sprite, one character only, entire body visible from head to toe, centered in frame, no cropping, solid white studio background, {appearance}, pose/action: {pose}, anime/game sprite style, consistent character design, no grid, no panel borders, no text, no labels, no watermark"), body)
+fn single_full_body_prompt(appearance: &str, pose: &str, body: &Value, model: &str) -> String {
+    let pose = format_sprite_label_for_prompt(pose);
+    transparent_prompt(format!("single full-body character sprite, one character only, entire body visible from head to toe, centered in frame, no cropping, solid white studio background, {appearance}, pose/action: {pose}, anime/game sprite style, consistent character design, no grid, no panel borders, no text, no labels, no watermark"), body, model)
 }
 
 fn full_body_sheet_prompt(
@@ -581,7 +640,35 @@ fn full_body_sheet_prompt(
     cell_width: u32,
     cell_height: u32,
 ) -> String {
-    format!("full-body character pose sprite sheet source image, designed to be sliced into cells, target output canvas is {sheet_width}x{sheet_height} pixels, with each cell exactly {cell_width}x{cell_height} pixels, EXACTLY {} total grid cells and every cell must be filled, strict {cols} columns by {rows} rows grid, all vertical grid cuts are evenly spaced, solid white background, same character in every cell, same outfit, same proportions, first {} cells left-to-right top-to-bottom must match these poses: {}, {appearance}, each cell shows one complete full-body character from head to toe, centered upright, feet visible, no cropping, no text, no labels, no watermark", cols * rows, expressions.len(), expressions.join(", "))
+    let cell_count = cols * rows;
+    let readable = expressions
+        .iter()
+        .map(|expression| format_sprite_label_for_prompt(expression))
+        .collect::<Vec<_>>();
+    let filler_count = cell_count.saturating_sub(readable.len() as u32);
+    [
+        "full-body character pose sprite sheet source image, designed to be sliced into cells,".to_string(),
+        format!("target output canvas is {sheet_width}x{sheet_height} pixels, with each cell exactly {cell_width}x{cell_height} pixels,"),
+        format!("EXACTLY {cell_count} total grid cells and every cell must be filled, strict {cols} columns by {rows} rows grid,"),
+        "all vertical grid cuts are evenly spaced, solid white background, thin straight borders or clean gutters separating every cell,".to_string(),
+        "same character in every cell, same outfit, same proportions, same scale, consistent art style,".to_string(),
+        format!("first {} cells left-to-right top-to-bottom must match these poses: {},", readable.len(), readable.join(", ")),
+        if filler_count > 0 {
+            format!("fill the remaining {filler_count} cells with neutral idle filler sprites; filler cells are ignored after slicing,")
+        } else {
+            String::new()
+        },
+        format!("{appearance},"),
+        "each cell shows one complete full-body character from head to toe, centered upright, feet visible, no cropping,".to_string(),
+        "the character must use no more than 78% of the cell height; leave padding above the head and below the feet inside every cell,".to_string(),
+        "keep every sprite fully inside its own cell; no hair, feet, clothing, weapons, shadows, or effects may cross into another cell,".to_string(),
+        "do not make one single large full-body image, do not make a poster, comic page, collage, diagonal layout, or merged composition,".to_string(),
+        "all cells same size, perfectly aligned, no overlapping, no merged cells, no blank cells, no text, no labels, no numbers, no captions, no watermark".to_string(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 fn full_body_expression_sheet_prompt(
@@ -594,7 +681,39 @@ fn full_body_expression_sheet_prompt(
     cell_width: u32,
     cell_height: u32,
 ) -> String {
-    format!("full-body character expression sprite sheet source image, designed to be sliced into cells, target output canvas is {sheet_width}x{sheet_height} pixels, with each cell exactly {cell_width}x{cell_height} pixels, strict {cols} columns by {rows} rows grid, solid white background, same character and full-body pose family in every cell, expressions left-to-right top-to-bottom: {}, {appearance}, entire body visible from head to toe, centered in each cell, no cropping, no text, no labels, no watermark", expressions.join(", "))
+    let cell_count = cols * rows;
+    let readable = expressions
+        .iter()
+        .map(|expression| format_sprite_label_for_prompt(expression))
+        .collect::<Vec<_>>();
+    let filler_count = cell_count.saturating_sub(readable.len() as u32);
+    [
+        "full-body character expression sprite sheet source image, designed to be sliced into cells,".to_string(),
+        format!("target output canvas is {sheet_width}x{sheet_height} pixels, with each cell exactly {cell_width}x{cell_height} pixels,"),
+        format!("strict {cols} columns by {rows} rows grid, exactly {cell_count} equally sized tall rectangular cells,"),
+        format!("all vertical grid cuts are evenly spaced every {cell_width} pixels and all horizontal grid cuts every {cell_height} pixels,"),
+        "solid white background, thin straight borders or clean gutters separating every cell,".to_string(),
+        "same character in every cell, same outfit, same proportions, same scale, consistent art style,".to_string(),
+        format!("first {} cells left-to-right top-to-bottom must match these facial expressions while keeping the same relaxed standing idle pose: {},", readable.len(), readable.join(", ")),
+        if filler_count > 0 {
+            format!("fill the remaining {filler_count} cells with neutral relaxed standing idle filler sprites; filler cells are ignored after slicing,")
+        } else {
+            String::new()
+        },
+        format!("{appearance},"),
+        "each cell shows one complete full-body character from head to toe, centered upright, feet visible, no cropping,".to_string(),
+        "the character must use no more than 78% of the cell height; leave at least 10% empty padding above the head and 12% empty padding below the feet inside every cell,".to_string(),
+        "feet and shoes must be clearly above the bottom border or gutter, especially in the final row, never touching or cut by the cell edge,".to_string(),
+        "keep every sprite fully inside its own cell; no hair, feet, clothing, weapons, shadows, or effects may cross into another cell,".to_string(),
+        "only the face and mood change between the expression cells; body pose stays idle and relaxed,".to_string(),
+        "do not create action, walking, running, attack, casting, combat, jumping, sitting, or victory poses,".to_string(),
+        "do not make one single large full-body image, do not make a poster, comic page, collage, diagonal layout, or merged composition,".to_string(),
+        "all cells same size, perfectly aligned, no overlapping, no merged cells, no blank cells, no text, no labels, no numbers, no captions, no watermark".to_string(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 fn single_sprite_prompt(
@@ -602,26 +721,45 @@ fn single_sprite_prompt(
     appearance: &str,
     expression: &str,
     body: &Value,
+    model: &str,
 ) -> String {
     if sprite_type == "full-body" {
-        single_full_body_prompt(appearance, expression, body)
+        single_full_body_prompt(appearance, expression, body, model)
     } else {
-        single_portrait_prompt(appearance, expression, body)
+        single_portrait_prompt(appearance, expression, body, model)
     }
 }
 
-fn transparent_prompt(prompt: String, body: &Value) -> String {
-    if body
+fn transparent_prompt(prompt: String, body: &Value, model: &str) -> String {
+    if !body
         .get("nativeTransparentPng")
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        prompt
-            .replace("solid white studio background", "no background, png format")
-            .replace("solid white background", "no background, png format")
-    } else {
-        prompt
+        return prompt;
     }
+    let cleanup_friendly = is_gpt_image_2_model(model);
+    let replacement = if cleanup_friendly {
+        "no background, png format. If transparent output is unsupported, use a perfectly flat pure white #ffffff background with no shadows, gradients, scenery, floor line, or texture behind the character"
+    } else {
+        "no background, png format"
+    };
+    let mut updated = prompt
+        .replace("solid white studio background", replacement)
+        .replace("solid white background", replacement)
+        .replace("plain white background", replacement)
+        .replace("white studio background", replacement)
+        .replace("white background", replacement);
+    if updated == prompt && !updated.to_ascii_lowercase().contains("no background") {
+        updated.push_str(", ");
+        updated.push_str(replacement);
+    } else if cleanup_friendly
+        && !updated.to_ascii_lowercase().contains("flat pure white")
+        && updated.to_ascii_lowercase().contains("no background")
+    {
+        updated.push_str(". If transparent output is unsupported, use a perfectly flat pure white #ffffff background with no shadows, gradients, scenery, floor line, or texture behind the character");
+    }
+    updated
 }
 
 fn sprite_prompt_review_id(kind: &str, sprite_type: &str, label: &str) -> String {
@@ -699,18 +837,465 @@ fn cleanup_image_base64(value: &str, strength: u8) -> AppResult<String> {
 
 fn cleanup_image(image: DynamicImage, strength: u8) -> DynamicImage {
     let mut rgba = image.to_rgba8();
-    let threshold = 18.0 + (strength as f32 * 1.6);
-    for pixel in rgba.pixels_mut() {
-        let Rgba([r, g, b, a]) = *pixel;
-        let distance =
-            ((255.0 - r as f32).powi(2) + (255.0 - g as f32).powi(2) + (255.0 - b as f32).powi(2))
-                .sqrt();
-        if distance <= threshold {
-            let alpha = ((distance / threshold).clamp(0.0, 1.0) * a as f32) as u8;
-            *pixel = Rgba([r, g, b, alpha]);
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 {
+        return DynamicImage::ImageRgba8(rgba);
+    }
+
+    let matte = estimate_border_matte(&rgba, strength);
+    let pixel_count = (width as usize).saturating_mul(height as usize);
+    let mut matte_mask = vec![false; pixel_count];
+    let mut queue = VecDeque::new();
+    let strength_f = strength.min(100) as f32;
+    let hard_cutoff = 14.0 + (strength_f / 100.0) * 32.0;
+    let soft_cutoff = hard_cutoff + 30.0 + (strength_f / 100.0) * 42.0;
+    let halo_cutoff = soft_cutoff + 12.0 + (strength_f / 100.0) * 18.0;
+    let matte_luma = rgb_luma(matte);
+    let luma_floor = 178.0_f32.max(matte_luma - (30.0 + strength_f * 0.46));
+    let spread_limit = 18.0 + (strength_f / 100.0) * 38.0;
+
+    for x in 0..width {
+        enqueue_matte_candidate(
+            &rgba,
+            &mut matte_mask,
+            &mut queue,
+            width,
+            x,
+            0,
+            matte,
+            soft_cutoff,
+            luma_floor,
+            spread_limit,
+        );
+        enqueue_matte_candidate(
+            &rgba,
+            &mut matte_mask,
+            &mut queue,
+            width,
+            x,
+            height - 1,
+            matte,
+            soft_cutoff,
+            luma_floor,
+            spread_limit,
+        );
+    }
+    for y in 0..height {
+        enqueue_matte_candidate(
+            &rgba,
+            &mut matte_mask,
+            &mut queue,
+            width,
+            0,
+            y,
+            matte,
+            soft_cutoff,
+            luma_floor,
+            spread_limit,
+        );
+        enqueue_matte_candidate(
+            &rgba,
+            &mut matte_mask,
+            &mut queue,
+            width,
+            width - 1,
+            y,
+            matte,
+            soft_cutoff,
+            luma_floor,
+            spread_limit,
+        );
+    }
+    drain_matte_queue(
+        &rgba,
+        &mut matte_mask,
+        &mut queue,
+        width,
+        height,
+        matte,
+        soft_cutoff,
+        luma_floor,
+        spread_limit,
+    );
+
+    let strict_cutoff = (hard_cutoff + 22.0).min(soft_cutoff * 0.88);
+    let mut row_counts = vec![0u32; height as usize];
+    let mut col_counts = vec![0u32; width as usize];
+    for y in 0..height {
+        for x in 0..width {
+            let index = pixel_index(width, x, y);
+            if matte_mask[index] {
+                continue;
+            }
+            if is_matte_candidate(
+                &rgba,
+                x,
+                y,
+                matte,
+                strict_cutoff,
+                luma_floor + 10.0,
+                spread_limit - 8.0,
+            ) {
+                row_counts[y as usize] += 1;
+                col_counts[x as usize] += 1;
+            }
+        }
+    }
+    let broad_row_threshold = width as f32 * 0.34;
+    let broad_col_threshold = height as f32 * 0.34;
+    for y in 0..height {
+        for x in 0..width {
+            let index = pixel_index(width, x, y);
+            if matte_mask[index] {
+                continue;
+            }
+            if row_counts[y as usize] as f32 >= broad_row_threshold
+                || col_counts[x as usize] as f32 >= broad_col_threshold
+            {
+                if is_matte_candidate(
+                    &rgba,
+                    x,
+                    y,
+                    matte,
+                    strict_cutoff,
+                    luma_floor + 10.0,
+                    spread_limit - 8.0,
+                ) {
+                    matte_mask[index] = true;
+                    queue.push_back(index);
+                }
+            }
+        }
+    }
+    drain_matte_queue(
+        &rgba,
+        &mut matte_mask,
+        &mut queue,
+        width,
+        height,
+        matte,
+        soft_cutoff,
+        luma_floor,
+        spread_limit,
+    );
+
+    let original = rgba.clone();
+    for y in 0..height {
+        for x in 0..width {
+            let index = pixel_index(width, x, y);
+            let pixel = rgba.get_pixel_mut(x, y);
+            let Rgba([r, g, b, a]) = *pixel;
+            if matte_mask[index] {
+                *pixel = Rgba([r, g, b, 0]);
+                continue;
+            }
+            let matte_neighbors = matte_neighbor_weight(&matte_mask, width, height, x, y);
+            if matte_neighbors <= 0.0 {
+                continue;
+            }
+            let distance = rgb_distance(read_rgb(&original, x, y), matte);
+            if distance > halo_cutoff {
+                continue;
+            }
+            let fade = 1.0
+                - ((distance - hard_cutoff) / (halo_cutoff - hard_cutoff).max(1.0)).clamp(0.0, 1.0);
+            let cleanup_weight = fade * (matte_neighbors / 3.2).clamp(0.0, 1.0);
+            if cleanup_weight <= 0.0 {
+                continue;
+            }
+            if let Some(neighbor) =
+                foreground_neighbor_color(&original, &matte_mask, width, height, x, y)
+            {
+                let blend = (cleanup_weight * (0.55 + strength_f / 400.0)).clamp(0.0, 1.0);
+                *pixel = Rgba([
+                    lerp_u8(r, neighbor.0, blend),
+                    lerp_u8(g, neighbor.1, blend),
+                    lerp_u8(b, neighbor.2, blend),
+                    ((a as f32) * (1.0 - cleanup_weight * (0.18 + strength_f / 280.0))).round()
+                        as u8,
+                ]);
+            }
         }
     }
     DynamicImage::ImageRgba8(rgba)
+}
+
+fn pixel_index(width: u32, x: u32, y: u32) -> usize {
+    (y as usize * width as usize) + x as usize
+}
+
+fn read_rgb(image: &RgbaImage, x: u32, y: u32) -> (u8, u8, u8) {
+    let Rgba([r, g, b, _]) = *image.get_pixel(x, y);
+    (r, g, b)
+}
+
+fn rgb_luma(color: (u8, u8, u8)) -> f32 {
+    color.0 as f32 * 0.2126 + color.1 as f32 * 0.7152 + color.2 as f32 * 0.0722
+}
+
+fn rgb_spread(color: (u8, u8, u8)) -> f32 {
+    let max = color.0.max(color.1).max(color.2) as f32;
+    let min = color.0.min(color.1).min(color.2) as f32;
+    max - min
+}
+
+fn rgb_distance(a: (u8, u8, u8), b: (u8, u8, u8)) -> f32 {
+    ((a.0 as f32 - b.0 as f32).powi(2)
+        + (a.1 as f32 - b.1 as f32).powi(2)
+        + (a.2 as f32 - b.2 as f32).powi(2))
+    .sqrt()
+}
+
+fn estimate_border_matte(image: &RgbaImage, strength: u8) -> (u8, u8, u8) {
+    let (width, height) = image.dimensions();
+    let step = (width.min(height) / 96).max(1);
+    let mut red = Vec::new();
+    let mut green = Vec::new();
+    let mut blue = Vec::new();
+    let mut accept = |x: u32, y: u32| {
+        let Rgba([r, g, b, a]) = *image.get_pixel(x, y);
+        if a <= 4 {
+            return;
+        }
+        let color = (r, g, b);
+        if rgb_luma(color) < 172.0 - strength as f32 * 0.18
+            || rgb_spread(color) > 38.0 + strength as f32 * 0.3
+        {
+            return;
+        }
+        red.push(r);
+        green.push(g);
+        blue.push(b);
+    };
+    let mut x = 0;
+    while x < width {
+        accept(x, 0);
+        accept(x, height - 1);
+        x = x.saturating_add(step);
+    }
+    let mut y = 0;
+    while y < height {
+        accept(0, y);
+        accept(width - 1, y);
+        y = y.saturating_add(step);
+    }
+    (
+        median_u8(red, 255),
+        median_u8(green, 255),
+        median_u8(blue, 255),
+    )
+}
+
+fn median_u8(mut values: Vec<u8>, fallback: u8) -> u8 {
+    if values.is_empty() {
+        return fallback;
+    }
+    values.sort_unstable();
+    values[values.len() / 2]
+}
+
+fn is_matte_candidate(
+    image: &RgbaImage,
+    x: u32,
+    y: u32,
+    matte: (u8, u8, u8),
+    cutoff: f32,
+    luma_floor: f32,
+    spread_limit: f32,
+) -> bool {
+    let Rgba([r, g, b, a]) = *image.get_pixel(x, y);
+    if a <= 4 {
+        return true;
+    }
+    let color = (r, g, b);
+    rgb_luma(color) >= luma_floor
+        && rgb_spread(color) <= spread_limit.max(0.0)
+        && rgb_distance(color, matte) <= cutoff
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enqueue_matte_candidate(
+    image: &RgbaImage,
+    matte_mask: &mut [bool],
+    queue: &mut VecDeque<usize>,
+    width: u32,
+    x: u32,
+    y: u32,
+    matte: (u8, u8, u8),
+    cutoff: f32,
+    luma_floor: f32,
+    spread_limit: f32,
+) {
+    let index = pixel_index(width, x, y);
+    if matte_mask[index]
+        || !is_matte_candidate(image, x, y, matte, cutoff, luma_floor, spread_limit)
+    {
+        return;
+    }
+    matte_mask[index] = true;
+    queue.push_back(index);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drain_matte_queue(
+    image: &RgbaImage,
+    matte_mask: &mut [bool],
+    queue: &mut VecDeque<usize>,
+    width: u32,
+    height: u32,
+    matte: (u8, u8, u8),
+    cutoff: f32,
+    luma_floor: f32,
+    spread_limit: f32,
+) {
+    while let Some(index) = queue.pop_front() {
+        let x = (index % width as usize) as u32;
+        let y = (index / width as usize) as u32;
+        if x > 0 {
+            enqueue_matte_candidate(
+                image,
+                matte_mask,
+                queue,
+                width,
+                x - 1,
+                y,
+                matte,
+                cutoff,
+                luma_floor,
+                spread_limit,
+            );
+        }
+        if x + 1 < width {
+            enqueue_matte_candidate(
+                image,
+                matte_mask,
+                queue,
+                width,
+                x + 1,
+                y,
+                matte,
+                cutoff,
+                luma_floor,
+                spread_limit,
+            );
+        }
+        if y > 0 {
+            enqueue_matte_candidate(
+                image,
+                matte_mask,
+                queue,
+                width,
+                x,
+                y - 1,
+                matte,
+                cutoff,
+                luma_floor,
+                spread_limit,
+            );
+        }
+        if y + 1 < height {
+            enqueue_matte_candidate(
+                image,
+                matte_mask,
+                queue,
+                width,
+                x,
+                y + 1,
+                matte,
+                cutoff,
+                luma_floor,
+                spread_limit,
+            );
+        }
+    }
+}
+
+fn matte_neighbor_weight(matte_mask: &[bool], width: u32, height: u32, x: u32, y: u32) -> f32 {
+    let mut weight = 0.0;
+    for y_offset in -1..=1 {
+        for x_offset in -1..=1 {
+            if x_offset == 0 && y_offset == 0 {
+                continue;
+            }
+            let Some(sample_x) = x.checked_add_signed(x_offset) else {
+                continue;
+            };
+            let Some(sample_y) = y.checked_add_signed(y_offset) else {
+                continue;
+            };
+            if sample_x >= width || sample_y >= height {
+                continue;
+            }
+            if matte_mask[pixel_index(width, sample_x, sample_y)] {
+                weight += if x_offset == 0 || y_offset == 0 {
+                    1.0
+                } else {
+                    0.7
+                };
+            }
+        }
+    }
+    weight
+}
+
+fn foreground_neighbor_color(
+    image: &RgbaImage,
+    matte_mask: &[bool],
+    width: u32,
+    height: u32,
+    x: u32,
+    y: u32,
+) -> Option<(u8, u8, u8)> {
+    let mut red = 0.0;
+    let mut green = 0.0;
+    let mut blue = 0.0;
+    let mut total = 0.0;
+    for radius in 1..=4 {
+        for y_offset in -(radius as i32)..=(radius as i32) {
+            for x_offset in -(radius as i32)..=(radius as i32) {
+                let Some(sample_x) = x.checked_add_signed(x_offset) else {
+                    continue;
+                };
+                let Some(sample_y) = y.checked_add_signed(y_offset) else {
+                    continue;
+                };
+                if sample_x >= width || sample_y >= height {
+                    continue;
+                }
+                if matte_mask[pixel_index(width, sample_x, sample_y)] {
+                    continue;
+                }
+                let Rgba([r, g, b, a]) = *image.get_pixel(sample_x, sample_y);
+                if a <= 16 {
+                    continue;
+                }
+                let distance = ((x_offset * x_offset + y_offset * y_offset) as f32)
+                    .sqrt()
+                    .max(1.0);
+                let weight = (a as f32 / 255.0) / distance;
+                red += r as f32 * weight;
+                green += g as f32 * weight;
+                blue += b as f32 * weight;
+                total += weight;
+            }
+        }
+        if total > 0.0 {
+            break;
+        }
+    }
+    (total > 0.0).then(|| {
+        (
+            (red / total).round().clamp(0.0, 255.0) as u8,
+            (green / total).round().clamp(0.0, 255.0) as u8,
+            (blue / total).round().clamp(0.0, 255.0) as u8,
+        )
+    })
+}
+
+fn lerp_u8(from: u8, to: u8, amount: f32) -> u8 {
+    (from as f32 + (to as f32 - from as f32) * amount)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 fn encode_png_base64(image: DynamicImage) -> AppResult<String> {

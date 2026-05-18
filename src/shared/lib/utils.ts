@@ -57,32 +57,13 @@ export interface AvatarCrop {
   srcHeight: number;
 }
 
-/** Avatar crop — legacy format (zoom + pan offset). Render-only path so previously
- *  saved crops display unchanged until the user re-edits them, at which point the
- *  editor writes the current AvatarCrop format. No automatic migration on read. */
-export interface LegacyAvatarCrop {
-  zoom: number;
-  offsetX: number;
-  offsetY: number;
-  fullImage?: boolean;
-}
-
-/** Union alias for either crop shape — handy when threading a value through
- *  type-narrow interfaces that just need "a crop, either format". */
-export type AvatarCropValue = AvatarCrop | LegacyAvatarCrop;
-
-/** Discriminator: legacy crops have `zoom`, current crops have `srcWidth`. */
-export function isLegacyAvatarCrop(c: AvatarCrop | LegacyAvatarCrop): c is LegacyAvatarCrop {
-  return typeof (c as LegacyAvatarCrop).zoom === "number" && typeof (c as AvatarCrop).srcWidth !== "number";
-}
+export type AvatarCropValue = AvatarCrop;
 
 /** Parses a JSON-encoded avatarCrop string (as stored on persona rows and as
  *  emitted from extensions on character rows when serialized) with defensive
- *  shape validation. Accepts either the current source-relative shape
- *  (srcX/Y/W/H) or the legacy zoom+offset shape, so a malformed cell never
- *  breaks rendering — returns null and the caller falls back to the uncropped
- *  render. */
-export function parseAvatarCropJson(raw: string | undefined | null): AvatarCrop | LegacyAvatarCrop | null {
+ *  shape validation. Malformed data returns null and the caller falls back to
+ *  the uncropped render. */
+export function parseAvatarCropJson(raw: string | undefined | null): AvatarCrop | null {
   if (!raw) return null;
   try {
     const obj = JSON.parse(raw);
@@ -106,19 +87,6 @@ export function parseAvatarCropJson(raw: string | undefined | null): AvatarCrop 
         srcHeight: obj.srcHeight,
       };
     }
-    if (
-      Number.isFinite(obj.zoom) &&
-      Number.isFinite(obj.offsetX) &&
-      Number.isFinite(obj.offsetY) &&
-      obj.zoom > 0
-    ) {
-      return {
-        zoom: obj.zoom,
-        offsetX: obj.offsetX,
-        offsetY: obj.offsetY,
-        ...(obj.fullImage ? { fullImage: true } : {}),
-      };
-    }
   } catch {
     /* fall through to null */
   }
@@ -130,31 +98,16 @@ export function parseAvatarCropJson(raw: string | undefined | null): AvatarCrop 
  *  `position: relative` (the `<img>` is rendered absolutely-positioned and sized
  *  larger than the container so it can be panned to expose any source region).
  *
- *  Three modes:
+ *  Two modes:
  *  - No crop: returns `{}` so the consumer's `<img>` (typically with
  *    `object-cover` Tailwind class) renders exactly as before.
- *  - Legacy crop: returns the historical CSS transform — preserves the old visual
- *    so already-shipped data isn't disturbed by the data-model change.
- *  - Current crop: positions the `<img>` so the crop rectangle maps onto the
+ *  - Crop: positions the `<img>` so the crop rectangle maps onto the
  *    container's full area. Works for any source aspect ratio without distorting
  *    the image, because a square-in-source-pixels crop makes the `<img>` element
  *    box take the source's aspect ratio, and `object-fit: fill` then fills that
  *    box undistorted. */
-export function getAvatarCropStyle(crop?: AvatarCrop | LegacyAvatarCrop | null): CSSProperties {
+export function getAvatarCropStyle(crop?: AvatarCrop | null): CSSProperties {
   if (!crop) return {};
-
-  if (isLegacyAvatarCrop(crop)) {
-    if (crop.fullImage) {
-      return {
-        objectFit: "contain",
-        transform: `scale(${crop.zoom}) translate(${crop.offsetX}%, ${crop.offsetY}%)`,
-      };
-    }
-    if (crop.zoom <= 1) return {};
-    return {
-      transform: `scale(${crop.zoom}) translate(${crop.offsetX}%, ${crop.offsetY}%)`,
-    };
-  }
 
   const { srcX, srcY, srcWidth, srcHeight } = crop;
   if (srcWidth <= 0 || srcHeight <= 0) return {};

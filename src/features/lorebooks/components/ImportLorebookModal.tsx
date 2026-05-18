@@ -5,7 +5,7 @@ import { useState, useRef } from "react";
 import { Modal } from "../../../shared/components/ui/Modal";
 import { Download, FileJson, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 
 interface Props {
   open: boolean;

@@ -42,7 +42,7 @@ import {
 import { showConfirmDialog } from "../../../shared/lib/app-dialogs";
 import { cn } from "../../../shared/lib/utils";
 import { HelpTooltip } from "../../../shared/components/ui/HelpTooltip";
-import { api } from "../api/personas-api";
+import { api } from "../../../shared/api/api-client";
 import { ExportFormatDialog, type ExportFormatChoice } from "../../../shared/components/ui/ExportFormatDialog";
 
 type PersonaRow = {

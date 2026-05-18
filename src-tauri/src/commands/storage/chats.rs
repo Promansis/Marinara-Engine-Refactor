@@ -533,63 +533,6 @@ pub(crate) fn generate_summary(state: &AppState, chat_id: &str, body: Value) -> 
     }))
 }
 
-pub(crate) fn backfill_summaries(state: &AppState, chat_id: &str, body: Value) -> AppResult<Value> {
-    let chat = get_required(state, "chats", chat_id)?;
-    let mut meta = metadata_map(&chat);
-    let max_missing_days = body
-        .get("maxMissingDays")
-        .and_then(Value::as_u64)
-        .unwrap_or(14)
-        .clamp(1, 60) as usize;
-    let mut day_summaries = meta
-        .remove("daySummaries")
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
-    let messages = messages_for_chat(state, chat_id)?;
-    let mut by_day: Map<String, Value> = Map::new();
-    for message in messages
-        .into_iter()
-        .filter(|message| !is_hidden_from_ai(message) && !message_content(message).is_empty())
-    {
-        let key = message
-            .get("createdAt")
-            .and_then(Value::as_str)
-            .and_then(|value| value.get(0..10))
-            .unwrap_or("unknown")
-            .to_string();
-        by_day
-            .entry(key)
-            .or_insert_with(|| json!([]))
-            .as_array_mut()
-            .unwrap()
-            .push(message);
-    }
-    let mut generated_days = Vec::new();
-    let missing_days = by_day
-        .into_iter()
-        .filter(|(day, _)| !day_summaries.contains_key(day))
-        .take(max_missing_days)
-        .collect::<Vec<_>>();
-    for (day, value) in missing_days {
-        let day_messages = value.as_array().cloned().unwrap_or_default();
-        let summary = build_local_summary(&day_messages);
-        day_summaries.insert(day.clone(), json!({ "summary": summary, "keyDetails": [] }));
-        generated_days.push(day);
-    }
-    let mut patch = Map::new();
-    patch.insert("daySummaries".to_string(), Value::Object(day_summaries));
-    merge_chat_metadata(state, chat_id, patch)?;
-    Ok(json!({
-        "generatedDays": generated_days,
-        "consolidatedWeeks": [],
-        "failedDays": [],
-        "failedWeeks": [],
-        "missingDayCount": generated_days.len(),
-        "processedDayCount": generated_days.len(),
-        "remainingMissingDayCount": 0
-    }))
-}
-
 pub(crate) fn touch_chat(state: &AppState, chat_id: &str) -> AppResult<()> {
     if state.storage.get("chats", chat_id)?.is_some() {
         state

@@ -16,7 +16,7 @@ import { useAgentConfigs, useUpdateAgent, type AgentConfigRow } from "../../agen
 import { useCharacters, usePersonas } from "../../characters/hooks/use-characters";
 import { useGenerate } from "../../generation/hooks/use-generate";
 import { useGameStatePatcher } from "../../world-state/hooks/use-world-state-patcher";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { parseCharacterDisplayData } from "../../../shared/lib/character-display";
 import { cn } from "../../../shared/lib/utils";
 import {

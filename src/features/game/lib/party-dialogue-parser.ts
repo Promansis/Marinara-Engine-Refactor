@@ -78,8 +78,7 @@ export function parsePartyDialogue(raw: string): PartyDialogueLine[] {
 
     if (!VALID_TYPES.has(rawType as PartyDialogueType)) continue;
 
-    // Normalize legacy `extra` → `side` (the two types were always identical; `extra` is kept
-    // in the union only so historical saved messages still parse).
+    // Normalize `extra` to the current `side` display lane.
     if (rawType === "extra") rawType = "side";
 
     // Strip surrounding dialogue quotes if present (for main/side/extra/whisper dialogue)

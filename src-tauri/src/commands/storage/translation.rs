@@ -5,7 +5,10 @@ use super::*;
 
 pub(crate) async fn translate_text(state: &AppState, body: Value) -> AppResult<Value> {
     let text = required_string(&body, "text")?;
-    let provider = body.get("provider").and_then(Value::as_str).unwrap_or("google");
+    let provider = body
+        .get("provider")
+        .and_then(Value::as_str)
+        .unwrap_or("google");
     let target_language = body
         .get("targetLanguage")
         .and_then(Value::as_str)
@@ -49,10 +52,16 @@ async fn translate_with_ai(
         parameters: json!({ "temperature": 0.3 }),
         tools: Vec::new(),
     };
-    marinara_llm::complete(request).await.map(|value| value.trim().to_string())
+    marinara_llm::complete(request)
+        .await
+        .map(|value| value.trim().to_string())
 }
 
-async fn translate_with_deeplx(text: &str, target_language: &str, body: &Value) -> AppResult<String> {
+async fn translate_with_deeplx(
+    text: &str,
+    target_language: &str,
+    body: &Value,
+) -> AppResult<String> {
     let base_url = required_string(body, "deeplxUrl")?.trim_end_matches('/');
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -79,13 +88,21 @@ async fn translate_with_deeplx(text: &str, target_language: &str, body: &Value) 
         .map_err(|error| AppError::new("translation_failed", error.to_string()))?;
     Ok(data
         .get("data")
-        .or_else(|| data.get("alternatives").and_then(|value| value.as_array()).and_then(|items| items.first()))
+        .or_else(|| {
+            data.get("alternatives")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.first())
+        })
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string())
 }
 
-async fn translate_with_deepl(text: &str, target_language: &str, body: &Value) -> AppResult<String> {
+async fn translate_with_deepl(
+    text: &str,
+    target_language: &str,
+    body: &Value,
+) -> AppResult<String> {
     let api_key = required_string(body, "deeplApiKey")?;
     let endpoint = if api_key.ends_with(":fx") {
         "https://api-free.deepl.com/v2/translate"
@@ -97,7 +114,10 @@ async fn translate_with_deepl(text: &str, target_language: &str, body: &Value) -
         .build()
         .map_err(|error| AppError::new("translation_client_error", error.to_string()))?
         .post(endpoint)
-        .header(reqwest::header::AUTHORIZATION, format!("DeepL-Auth-Key {api_key}"))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("DeepL-Auth-Key {api_key}"),
+        )
         .json(&json!({
             "text": [text],
             "target_lang": target_language.to_ascii_uppercase()

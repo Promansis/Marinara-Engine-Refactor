@@ -5,7 +5,7 @@ import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useChatStore } from "../../../shared/stores/chat.store";
-import { chatKeys } from "../../conversation/hooks/use-conversation-data";
+import { chatKeys } from "../../chats/hooks/use-chats";
 import { llmApi } from "../../../shared/api/llm-api";
 import { storageApi } from "../../../shared/api/storage-api";
 import {

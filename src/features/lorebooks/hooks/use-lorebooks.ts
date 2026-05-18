@@ -4,7 +4,7 @@
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { scanActiveLorebookEntries } from "../../../engine/generation";
 import { storageApi } from "../../../shared/api/storage-api";
-import { api, ApiError } from "../../../shared/lib/api-client";
+import { api, ApiError } from "../../../shared/api/api-client";
 import type { Lorebook, LorebookEntry, LorebookFolder } from "@marinara-engine/shared";
 import { characterKeys } from "../../characters/hooks/use-characters";
 
@@ -256,7 +256,7 @@ export function useReorderLorebookEntries() {
       entryIds: string[];
       /**
        * Container scope for the reorder. `undefined` renumbers every entry
-       * (legacy behavior). `null` reorders root-level entries only.
+       * `null` reorders root-level entries only.
        * A string ID reorders the entries inside that folder only.
        */
       folderId?: string | null;

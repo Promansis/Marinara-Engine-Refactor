@@ -2,7 +2,7 @@
 // React Query: Chat Preset hooks
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../shared/lib/api-client";
+import { api } from "../../../shared/api/api-client";
 import { chatKeys } from "../../chats/hooks/use-chats";
 import type { Chat, ChatMode, ChatPreset, ChatPresetSettings } from "@marinara-engine/shared";
 
