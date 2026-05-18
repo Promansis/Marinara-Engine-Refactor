@@ -34,7 +34,7 @@ import { useGenerate } from "../../generation/hooks/use-generate";
 import { useCharacters, usePersonas } from "../../characters/hooks/use-characters";
 import { useConnections } from "../../connections/hooks/use-connections";
 import { usePageActivity } from "../../../shared/hooks/use-page-activity";
-import { api, ApiError } from "../../../shared/lib/api-client";
+import { ApiError } from "../../../shared/lib/api-client";
 import { filterLanguageGenerationConnections } from "../../../shared/lib/connection-filters";
 import { getChatDisplayName, getConnectedChatDisplayName, parseChatMetadata } from "../../../shared/lib/chat-display";
 import { parseCharacterDisplayData } from "../../../shared/lib/character-display";
@@ -57,6 +57,7 @@ import { Modal } from "../../../shared/components/ui/Modal";
 import { useEncounter } from "../../encounter/hooks/use-encounter";
 import { useScene } from "../../roleplay/hooks/use-scene";
 import { useEncounterStore } from "../../encounter/stores/encounter.store";
+import { worldStateApi } from "../../world-state/api/world-state-api";
 import { useTranslationStore } from "../../../shared/stores/translation.store";
 import { ttsService } from "../../../shared/lib/tts-service";
 import { useTTSConfig } from "../../../shared/hooks/use-tts";
@@ -666,7 +667,7 @@ export function ModeSurface() {
   const refreshVisibleGameState = useCallback(async () => {
     if (!shouldRefreshGameStateOnSwipe || !activeChatId) return;
     try {
-      const gs = await api.get<import("@marinara-engine/shared").GameState | null>(`/chats/${activeChatId}/game-state`);
+      const gs = await worldStateApi.get(activeChatId);
       if (useChatStore.getState().activeChatId !== activeChatId) return;
       useGameStateStore.getState().setGameState(gs ?? null);
     } catch {

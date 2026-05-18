@@ -30,7 +30,6 @@ mod knowledge;
 mod llm;
 mod prompts;
 mod router;
-mod scene;
 mod shared;
 mod sprites;
 mod translation;

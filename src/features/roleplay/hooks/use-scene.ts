@@ -19,7 +19,6 @@ import type {
   SceneCreateRequest,
   SceneCreateResponse,
   SceneConcludeRequest,
-  SceneConcludeResponse,
   SceneForkMode,
   SceneForkRequest,
   SceneForkResponse,

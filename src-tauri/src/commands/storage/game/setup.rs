@@ -2,7 +2,7 @@ use super::*;
 use super::super::chats::messages_for_chat;
 use super::super::generation::resolve_generation_connection;
 use super::super::llm::llm_connection_from_value;
-use super::super::scene::parse_json_object_from_text;
+use super::super::shared::parse_json_object_from_text;
 
 fn fallback_game_blueprint(preferences: &str) -> Value {
     let overview = if preferences.trim().is_empty() {

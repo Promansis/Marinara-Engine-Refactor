@@ -3,6 +3,9 @@
 // ──────────────────────────────────────────────
 import { api } from "./api-client";
 import { chatBackgroundMetadataToUrl } from "./backgrounds";
+import { planRoleplayScene, createRoleplayScene } from "../../engine/modes/roleplay/scene";
+import { llmApi } from "../api/llm-api";
+import { storageApi } from "../api/storage-api";
 import { useChatStore } from "../stores/chat.store";
 import { useUIStore } from "../stores/ui.store";
 import { toast } from "sonner";
@@ -558,15 +561,18 @@ const COMMANDS: SlashCommand[] = [
         }
       }
 
-      // Step 1: Ask the LLM to plan the scene (comprehensive plan)
+      // Step 1: Ask the roleplay engine to plan the scene.
       const planToastId = toast.loading("Planning scene...", { icon: "🎬" });
       let planRes: ScenePlanResponse;
       try {
-        planRes = await api.post<ScenePlanResponse>("/scene/plan", {
-          chatId: ctx.chatId,
-          prompt,
-          connectionId: null,
-        });
+        planRes = await planRoleplayScene(
+          { storage: storageApi, llm: llmApi },
+          {
+            chatId: ctx.chatId,
+            prompt,
+            connectionId: null,
+          },
+        );
       } catch {
         toast.dismiss(planToastId);
         return { handled: true, feedback: "Failed to plan scene. Check your API connection." };
@@ -580,7 +586,7 @@ const COMMANDS: SlashCommand[] = [
       // Step 2: Create the scene chat using the full plan
       toast.loading("Creating scene...", { id: planToastId, icon: "🎬" });
       try {
-        const res = await api.post<SceneCreateResponse>("/scene/create", {
+        const res: SceneCreateResponse = await createRoleplayScene(storageApi, {
           originChatId: ctx.chatId,
           initiatorCharId: null, // user-initiated
           plan: planRes.plan,

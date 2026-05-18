@@ -212,12 +212,10 @@ export async function* generateLorebookMaker(
         ? `Generate exactly ${batchSize} lorebook entries based on: ${input.prompt}`
         : buildContinuationLorebookPrompt(input.prompt, batchSize, allEntries);
 
-    const raw = await completeMaker(capabilities.llm, input.connectionId, [
+    const raw = yield* runMakerRequest(capabilities.llm, input, [
       { role: "system", content: LOREBOOK_SYSTEM_PROMPT },
       { role: "user", content: userPrompt },
     ], 16384, signal);
-
-    yield { type: "token", data: raw };
 
     const parsed = parseObject<LorebookMakerData>(raw);
     if (index === 0) {
@@ -274,11 +272,10 @@ async function* generateJsonMaker(
   signal?: AbortSignal,
 ): AsyncGenerator<MakerEvent> {
   assertReady(input.prompt, input.connectionId, signal);
-  const raw = await completeMaker(capabilities.llm, input.connectionId, [
+  const raw = yield* runMakerRequest(capabilities.llm, input, [
     { role: "system", content: options.systemPrompt },
     { role: "user", content: options.userPrompt },
   ], options.maxTokens, signal);
-  yield { type: "token", data: raw };
 
   const payload = parseObject(raw);
   yield {
@@ -287,22 +284,39 @@ async function* generateJsonMaker(
   };
 }
 
-async function completeMaker(
+async function* runMakerRequest(
   llm: LlmGateway,
-  connectionId: string,
+  input: CharacterOrPersonaMakerInput,
   messages: LlmMessage[],
   maxTokens: number,
   signal?: AbortSignal,
-): Promise<string> {
+): AsyncGenerator<MakerEvent, string> {
   if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-  return llm.complete(
-    {
-      connectionId,
+  const request = {
+      connectionId: input.connectionId,
       messages,
       parameters: { temperature: 1, maxTokens },
-    },
-    signal,
-  );
+  };
+  if (!input.streaming) {
+    const raw = await llm.complete(request, signal);
+    yield { type: "token", data: raw };
+    return raw;
+  }
+
+  let raw = "";
+  for await (const chunk of llm.stream(request, signal)) {
+    if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+    if (chunk.type === "token") {
+      const token = typeof chunk.text === "string" ? chunk.text : typeof chunk.data === "string" ? chunk.data : "";
+      if (token) {
+        raw += token;
+        yield { type: "token", data: token };
+      }
+    } else if (chunk.type === "error") {
+      throw new Error(typeof chunk.data === "string" ? chunk.data : "Generation failed");
+    }
+  }
+  return raw;
 }
 
 function buildContinuationLorebookPrompt(prompt: string, batchSize: number, existingEntries: LorebookMakerEntry[]): string {

@@ -9,6 +9,7 @@ import { useGameAssetStore } from "../stores/game-asset.store";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { useUIStore } from "../../../shared/stores/ui.store";
 import { useGameStateStore } from "../../world-state/stores/world-state.store";
+import { worldStateApi } from "../../world-state/api/world-state-api";
 import {
   useSyncGameState,
   useCreateGame,
@@ -1704,8 +1705,7 @@ export function GameSurface({
   useEffect(() => {
     const existing = useGameStateStore.getState().current;
     if (existing?.chatId === activeChatId) return;
-    api
-      .get<import("@marinara-engine/shared").GameState | null>(`/chats/${activeChatId}/game-state`)
+    worldStateApi.get(activeChatId)
       .then((gs) => {
         if (gs) {
           useGameStateStore.getState().setGameState(gs);
@@ -2232,7 +2232,7 @@ export function GameSurface({
       if (currentGameState?.chatId === activeChatId && currentPlayerStats && nextPlayerStats !== currentPlayerStats) {
         const syncedGameState = { ...currentGameState, playerStats: nextPlayerStats };
         useGameStateStore.getState().setGameState(syncedGameState);
-        api.patch(`/chats/${activeChatId}/game-state`, { playerStats: nextPlayerStats }).catch(() => {});
+        worldStateApi.patch(activeChatId, { playerStats: nextPlayerStats }).catch(() => {});
       }
 
       for (const entry of journalEntries) {
@@ -4568,7 +4568,7 @@ export function GameSurface({
             time: formattedTime,
           });
         }
-        api.patch(`/chats/${activeChatId}/game-state`, { time: formattedTime }).catch(() => {});
+        worldStateApi.patch(activeChatId, { time: formattedTime }).catch(() => {});
         toast.success(`Set game day to ${nextTime.day}.`);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to update game day.");
@@ -4808,7 +4808,7 @@ export function GameSurface({
 
     try {
       if (shouldPatchGameState && nextPlayerStats) {
-        await api.patch(`/chats/${activeChatId}/game-state`, { playerStats: nextPlayerStats });
+        await worldStateApi.patch(activeChatId, { playerStats: nextPlayerStats });
         patchedGameState = true;
       }
 
@@ -4832,7 +4832,7 @@ export function GameSurface({
       return addedItemName;
     } catch (error) {
       if (patchedGameState) {
-        api.patch(`/chats/${activeChatId}/game-state`, { playerStats: currentPlayerStats }).catch(() => {});
+        worldStateApi.patch(activeChatId, { playerStats: currentPlayerStats }).catch(() => {});
       }
       const message = error instanceof Error ? error.message : `Failed to add ${addedItemName} to inventory.`;
       toast.error(message);
@@ -4867,7 +4867,7 @@ export function GameSurface({
 
       try {
         if (shouldPatchGameState && nextPlayerStats) {
-          await api.patch(`/chats/${activeChatId}/game-state`, { playerStats: nextPlayerStats });
+          await worldStateApi.patch(activeChatId, { playerStats: nextPlayerStats });
           patchedGameState = true;
         }
 
@@ -4890,7 +4890,7 @@ export function GameSurface({
         toast.success(`Added 1 ${normalizedItemName}.`);
       } catch (error) {
         if (patchedGameState) {
-          api.patch(`/chats/${activeChatId}/game-state`, { playerStats: currentPlayerStats }).catch(() => {});
+          worldStateApi.patch(activeChatId, { playerStats: currentPlayerStats }).catch(() => {});
         }
         const message = error instanceof Error ? error.message : `Failed to increase ${normalizedItemName}.`;
         toast.error(message);
@@ -4927,7 +4927,7 @@ export function GameSurface({
 
       try {
         if (shouldPatchGameState && nextPlayerStats) {
-          await api.patch(`/chats/${activeChatId}/game-state`, { playerStats: nextPlayerStats });
+          await worldStateApi.patch(activeChatId, { playerStats: nextPlayerStats });
           patchedGameState = true;
         }
 
@@ -4958,7 +4958,7 @@ export function GameSurface({
         toast.success(`Removed ${itemName} from inventory.`);
       } catch (error) {
         if (patchedGameState) {
-          api.patch(`/chats/${activeChatId}/game-state`, { playerStats: currentPlayerStats }).catch(() => {});
+          worldStateApi.patch(activeChatId, { playerStats: currentPlayerStats }).catch(() => {});
         }
         const message = error instanceof Error ? error.message : `Failed to remove ${itemName} from inventory.`;
         toast.error(message);
@@ -4996,7 +4996,7 @@ export function GameSurface({
 
       try {
         if (shouldPatchGameState && nextPlayerStats) {
-          await api.patch(`/chats/${activeChatId}/game-state`, { playerStats: nextPlayerStats });
+          await worldStateApi.patch(activeChatId, { playerStats: nextPlayerStats });
           patchedGameState = true;
         }
 
@@ -5027,7 +5027,7 @@ export function GameSurface({
         toast.success(`Used ${normalizedItemName}.`);
       } catch (error) {
         if (patchedGameState) {
-          api.patch(`/chats/${activeChatId}/game-state`, { playerStats: currentPlayerStats }).catch(() => {});
+          worldStateApi.patch(activeChatId, { playerStats: currentPlayerStats }).catch(() => {});
         }
         const message = error instanceof Error ? error.message : `Failed to use ${normalizedItemName}.`;
         toast.error(message);
@@ -5069,7 +5069,7 @@ export function GameSurface({
 
       try {
         if (shouldPatchGameState && nextPlayerStats) {
-          await api.patch(`/chats/${activeChatId}/game-state`, { playerStats: nextPlayerStats });
+          await worldStateApi.patch(activeChatId, { playerStats: nextPlayerStats });
           patchedGameState = true;
         }
 
@@ -5090,7 +5090,7 @@ export function GameSurface({
         return resolvedName;
       } catch (error) {
         if (patchedGameState) {
-          api.patch(`/chats/${activeChatId}/game-state`, { playerStats: currentPlayerStats }).catch(() => {});
+          worldStateApi.patch(activeChatId, { playerStats: currentPlayerStats }).catch(() => {});
         }
         const message = error instanceof Error ? error.message : `Failed to rename ${currentName} to ${resolvedName}.`;
         toast.error(message);

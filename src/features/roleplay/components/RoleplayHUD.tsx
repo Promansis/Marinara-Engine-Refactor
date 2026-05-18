@@ -23,6 +23,7 @@ import { cn } from "../../../shared/lib/utils";
 import { api } from "../../../shared/lib/api-client";
 import type { AgentFailure } from "../../../shared/lib/agent-failures";
 import { TrackerPanelIcon } from "../../../shared/components/ui/TrackerPanelIcon";
+import { worldStateApi } from "../../world-state/api/world-state-api";
 import { useGameStateStore } from "../../world-state/stores/world-state.store";
 import { useAgentStore } from "../../../shared/stores/agent.store";
 import { useAgentConfigs, useCustomAgentRuns, type AgentConfigRow } from "../../agents/hooks/use-agents";
@@ -155,8 +156,8 @@ export function RoleplayHUD({
     if (existing?.chatId === chatId) return;
 
     let cancelled = false;
-    api
-      .get<GameState | null>(`/chats/${chatId}/game-state`)
+    worldStateApi
+      .get(chatId)
       .then((gs) => {
         if (!cancelled) setGameState(gs ?? null);
       })
@@ -199,7 +200,7 @@ export function RoleplayHUD({
         ...cleared,
       } as GameState);
     }
-    api.patch(`/chats/${chatId}/game-state`, { ...cleared, manual: true, clearOverrides: true }).catch(() => {});
+    worldStateApi.patch(chatId, { ...cleared, manual: true, clearOverrides: true }).catch(() => {});
     // Clear committed agent runs & memory from DB + reset client state
     api.delete(`/agents/runs/${chatId}`).catch(() => {});
     resetAgentStore();

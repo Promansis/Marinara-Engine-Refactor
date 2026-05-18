@@ -20,7 +20,6 @@ use super::integrations::*;
 use super::knowledge::*;
 use super::llm::*;
 use super::prompts::*;
-use super::scene::*;
 use super::shared::*;
 use super::sprites::*;
 use super::translation::*;
@@ -68,12 +67,6 @@ pub(crate) async fn route_request(
         ["llm", "models"] if method == "GET" => {
             llm_models(state, route.query.get("connectionId").map(String::as_str)).await
         }
-        ["scene", "plan"] if method == "POST" => scene_plan(state, body).await,
-        ["scene", "create"] if method == "POST" => scene_create(state, body),
-        ["scene", "conclude"] if method == "POST" => scene_conclude(state, body).await,
-        ["scene", "abandon"] if method == "POST" => scene_abandon(state, body),
-        ["scene", "fork"] if method == "POST" => scene_fork(state, body),
-        ["scene", "analyze"] if method == "POST" => scene_analyze(state, body).await,
         ["fonts", rest @ ..] => fonts_call(state, method, rest, body).await,
         ["sidecar", rest @ ..] => sidecar_call(method, rest, body),
         ["tts", rest @ ..] => tts_call(state, method, rest, body).await,
@@ -229,6 +222,15 @@ pub(crate) async fn route_request(
                 .unwrap_or_else(|| json!({})))
         }
         ["chats", chat_id, "game-state"] if method == "PATCH" => {
+            patch_chat_object_field(state, chat_id, "gameState", body)
+        }
+        ["world-state", chat_id] if method == "GET" => {
+            Ok(get_required(state, "chats", chat_id)?
+                .get("gameState")
+                .cloned()
+                .unwrap_or_else(|| json!({})))
+        }
+        ["world-state", chat_id] if method == "PATCH" => {
             patch_chat_object_field(state, chat_id, "gameState", body)
         }
         ["chats", chat_id, "summaries"] if method == "PATCH" => {

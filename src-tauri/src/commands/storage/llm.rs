@@ -79,7 +79,7 @@ pub(crate) async fn llm_stream_events(state: &AppState, body: Value) -> AppResul
     let content = marinara_llm::complete(llm_request_from_body(state, body)?).await?;
     Ok(vec![
         json!({ "type": "start" }),
-        json!({ "type": "token", "text": content }),
+        json!({ "type": "token", "text": content, "data": content }),
         json!({ "type": "done" }),
     ])
 }

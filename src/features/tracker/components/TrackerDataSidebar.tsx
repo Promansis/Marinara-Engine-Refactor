@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Sparkles } from "lucide-react";
 import {
-  type GameState,
   type InventoryItem,
   type Persona,
   type PresentCharacter,
@@ -10,6 +9,7 @@ import {
 import { useUIStore } from "../../../shared/stores/ui.store";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { useGameStateStore } from "../../world-state/stores/world-state.store";
+import { worldStateApi } from "../../world-state/api/world-state-api";
 import { useAgentStore } from "../../../shared/stores/agent.store";
 import { useChat, useChatMessages, useUpdateChatMetadata } from "../../chats/hooks/use-chats";
 import { useAgentConfigs, useUpdateAgent, type AgentConfigRow } from "../../agents/hooks/use-agents";
@@ -95,8 +95,8 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
 
     let cancelled = false;
     setLoadingGameState(true);
-    api
-      .get<GameState | null>(`/chats/${activeChatId}/game-state`)
+    worldStateApi
+      .get(activeChatId)
       .then((state) => {
         if (!cancelled) setGameState(state ?? null);
       })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 import type { GameState, PlayerStats } from "@marinara-engine/shared";
-import { api } from "../../../shared/lib/api-client";
+import { worldStateApi } from "../api/world-state-api";
 import { useGameStateStore } from "../stores/world-state.store";
 
 export type GameStatePatchField =
@@ -165,8 +165,8 @@ export async function flushGameStatePatch(chatId?: string) {
       promise: Promise.resolve(),
       canceled: false,
     };
-    const request: Promise<void> = api
-      .patch(`/chats/${queuedSnapshot.chatId}/game-state`, { ...payload, manual: true }, { signal: controller.signal })
+    const request: Promise<void> = worldStateApi
+      .patch(queuedSnapshot.chatId, { ...payload, manual: true }, { signal: controller.signal })
       .then(() => undefined)
       .catch((error) => {
         if (!inFlightEntry.canceled) {
@@ -244,8 +244,8 @@ function flushGameStatePatchOnUnload() {
 
     if (Object.keys(queued.fields).length === 0) continue;
     const payload = buildPayload(queued);
-    void api
-      .patch(`/chats/${queued.chatId}/game-state`, { ...payload, manual: true }, { keepalive: true })
+    void worldStateApi
+      .patch(queued.chatId, { ...payload, manual: true }, { keepalive: true })
       .catch(() => {});
   }
 }

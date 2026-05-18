@@ -15,7 +15,8 @@ export const llmApi: LlmGateway = {
     });
     for (const event of events) {
       if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-      yield event;
+      const text = typeof event.text === "string" ? event.text : typeof event.data === "string" ? event.data : undefined;
+      yield text === undefined ? event : { ...event, text };
     }
   },
   listModels: (connectionId?: string | null) =>

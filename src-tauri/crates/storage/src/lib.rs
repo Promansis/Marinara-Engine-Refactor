@@ -65,7 +65,9 @@ impl FileStorage {
         object
             .entry("createdAt".to_string())
             .or_insert_with(|| Value::String(now.clone()));
-        object.insert("updatedAt".to_string(), Value::String(now));
+        object
+            .entry("updatedAt".to_string())
+            .or_insert_with(|| Value::String(now));
         let record = Value::Object(object);
         rows.retain(|row| row.get("id").and_then(Value::as_str) != Some(id.as_str()));
         rows.push(record.clone());
@@ -82,7 +84,9 @@ impl FileStorage {
         object
             .entry("createdAt".to_string())
             .or_insert_with(|| Value::String(now.clone()));
-        object.insert("updatedAt".to_string(), Value::String(now));
+        object
+            .entry("updatedAt".to_string())
+            .or_insert_with(|| Value::String(now));
         let record = Value::Object(object);
         rows.retain(|row| row.get("id").and_then(Value::as_str) != Some(id));
         rows.push(record.clone());

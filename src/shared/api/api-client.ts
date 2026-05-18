@@ -192,8 +192,9 @@ export const api = {
   },
   stream: async function* (path: string, body?: unknown, signal?: AbortSignal): AsyncGenerator<string> {
     for await (const event of api.streamEvents(path, body, signal)) {
-      if (event.type === "token" && typeof event.data === "string") {
-        yield event.data;
+      const token = typeof event.data === "string" ? event.data : null;
+      if (event.type === "token" && token !== null) {
+        yield token;
       }
     }
   },
@@ -205,7 +206,7 @@ export const api = {
     if (signal?.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError");
     }
-    let events: Array<{ type?: unknown; data?: unknown; [key: string]: unknown }>;
+    let events: Array<{ type?: unknown; data?: unknown; text?: unknown; [key: string]: unknown }>;
     try {
       events = await invoke("api_stream_events", { path, body: body ?? null });
     } catch (error) {
@@ -216,7 +217,7 @@ export const api = {
         throw new DOMException("The operation was aborted.", "AbortError");
       }
       const type = typeof event.type === "string" ? event.type : "message";
-      yield { type, data: "data" in event ? event.data : event };
+      yield { type, data: "data" in event ? event.data : "text" in event ? event.text : event };
     }
   },
 };

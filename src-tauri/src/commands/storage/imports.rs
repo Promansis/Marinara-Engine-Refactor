@@ -1,6 +1,7 @@
 use super::shared::*;
 use super::*;
 mod bulk_imports;
+use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
@@ -26,6 +27,93 @@ fn modified_at(path: &Path) -> Value {
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| Value::String(format!("{}", duration.as_millis())))
         .unwrap_or(Value::Null)
+}
+
+fn parse_trusted_timestamp(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::Number(number) => {
+            let raw = number.as_f64()?;
+            if !raw.is_finite() {
+                return None;
+            }
+            let millis = if raw < 1_000_000_000_000.0 { raw * 1000.0 } else { raw };
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis.round() as i64)
+                .map(|time| time.to_rfc3339())
+        }
+        Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if trimmed.chars().all(|ch| ch.is_ascii_digit()) && trimmed.len() >= 10 {
+                if let Ok(number) = trimmed.parse::<f64>() {
+                    let millis = if trimmed.len() <= 10 { number * 1000.0 } else { number };
+                    return chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis.round() as i64)
+                        .map(|time| time.to_rfc3339());
+                }
+            }
+            chrono::DateTime::parse_from_rfc3339(trimmed)
+                .map(|time| time.with_timezone(&chrono::Utc).to_rfc3339())
+                .ok()
+                .or_else(|| Some(trimmed.to_string()))
+        }
+        _ => None,
+    }
+}
+
+fn timestamp_overrides_from_value(value: Option<&Value>) -> Option<(String, String)> {
+    let value = value?;
+    match value {
+        Value::String(raw) => {
+            if let Ok(parsed) = serde_json::from_str::<Value>(raw) {
+                timestamp_overrides_from_value(Some(&parsed))
+            } else {
+                parse_trusted_timestamp(Some(value)).map(|timestamp| (timestamp.clone(), timestamp))
+            }
+        }
+        Value::Object(object) => {
+            let created = parse_trusted_timestamp(object.get("createdAt"));
+            let updated = parse_trusted_timestamp(object.get("updatedAt"));
+            match (created, updated) {
+                (Some(created), Some(updated)) => Some((created, updated)),
+                (Some(created), None) => Some((created.clone(), created)),
+                (None, Some(updated)) => Some((updated.clone(), updated)),
+                (None, None) => None,
+            }
+        }
+        _ => parse_trusted_timestamp(Some(value)).map(|timestamp| (timestamp.clone(), timestamp)),
+    }
+}
+
+fn timestamp_overrides_from_body_and_payload(body: &Value, payload: &Value) -> Option<(String, String)> {
+    timestamp_overrides_from_value(
+        body.get("timestampOverrides")
+            .or_else(|| body.get("__timestampOverrides")),
+    )
+    .or_else(|| {
+        let created = body.get("createdAt");
+        let updated = body.get("updatedAt");
+        timestamp_overrides_from_value(Some(&json!({
+            "createdAt": created.cloned().unwrap_or(Value::Null),
+            "updatedAt": updated.cloned().unwrap_or(Value::Null)
+        })))
+    })
+    .or_else(|| {
+        payload
+            .get("metadata")
+            .and_then(|metadata| metadata.get("timestamps"))
+            .and_then(|timestamps| timestamp_overrides_from_value(Some(timestamps)))
+    })
+}
+
+fn apply_timestamp_overrides(record: &mut Value, body: &Value, payload: &Value) {
+    let Some((created_at, updated_at)) = timestamp_overrides_from_body_and_payload(body, payload) else {
+        return;
+    };
+    if let Some(object) = record.as_object_mut() {
+        object.insert("createdAt".to_string(), Value::String(created_at));
+        object.insert("updatedAt".to_string(), Value::String(updated_at));
+    }
 }
 
 fn parse_chara_text(text: &str) -> Option<Value> {
@@ -539,7 +627,8 @@ fn create_lorebook_from_payload(
     fallback_name: &str,
     character_id: Option<&str>,
 ) -> AppResult<Value> {
-    let (lorebook, entries) = normalize_lorebook(payload, fallback_name, character_id);
+    let (mut lorebook, entries) = normalize_lorebook(payload, fallback_name, character_id);
+    apply_timestamp_overrides(&mut lorebook, &Value::Null, payload);
     let record = state.storage.create("lorebooks", lorebook)?;
     let lorebook_id = record
         .get("id")
@@ -590,7 +679,7 @@ fn import_st_character_payload(
         .and_then(Value::as_str)
         .unwrap_or("Imported Character")
         .to_string();
-    let record = json!({
+    let mut record = json!({
         "data": serde_json::to_string(&data)?,
         "comment": data.get("creator_notes").and_then(Value::as_str).unwrap_or(""),
         "avatarPath": payload
@@ -600,6 +689,7 @@ fn import_st_character_payload(
             .unwrap_or(Value::Null),
         "format": payload.get("spec").and_then(Value::as_str).unwrap_or("chara_card_v2"),
     });
+    apply_timestamp_overrides(&mut record, body, &payload);
     let character = state.storage.create("characters", record)?;
 
     let import_embedded = body
@@ -656,11 +746,39 @@ pub(crate) fn import_st_character(state: &AppState, body: Value) -> AppResult<Va
 
 fn import_st_character_batch(state: &AppState, body: Value) -> AppResult<Value> {
     let files = decode_uploaded_files(&body, "files")?;
+    let mut timestamps_by_name: HashMap<String, Vec<Value>> = HashMap::new();
+    if let Some(raw_timestamps) = body.get("fileTimestamps").and_then(Value::as_str) {
+        if let Ok(Value::Array(entries)) = serde_json::from_str::<Value>(raw_timestamps) {
+            for entry in entries {
+                let Some(name) = entry.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                timestamps_by_name
+                    .entry(name.to_string())
+                    .or_default()
+                    .push(entry.clone());
+            }
+        }
+    }
     let mut results = Vec::new();
     for file in files {
         let filename = file.name.clone();
+        let mut file_body = body.clone();
+        if let Some(entry) = timestamps_by_name
+            .get_mut(&filename)
+            .and_then(|entries| if entries.is_empty() { None } else { Some(entries.remove(0)) })
+        {
+            if let Some(last_modified) = entry.get("lastModified").cloned() {
+                if let Some(object) = file_body.as_object_mut() {
+                    object.insert(
+                        "timestampOverrides".to_string(),
+                        json!({ "createdAt": last_modified, "updatedAt": last_modified }),
+                    );
+                }
+            }
+        }
         let result = parse_character_file(&file.name, &file.bytes).and_then(|payload| {
-            import_st_character_payload(state, payload, Some(filename.clone()), &body)
+            import_st_character_payload(state, payload, Some(filename.clone()), &file_body)
         });
         match result {
             Ok(mut value) => {
@@ -792,13 +910,32 @@ fn import_marinara_envelope(state: &AppState, envelope: Value) -> AppResult<Valu
         ));
     }
     let import_type = object.get("type").and_then(Value::as_str).unwrap_or("");
-    let data = object.get("data").cloned().unwrap_or(Value::Null);
+    let mut data = object.get("data").cloned().unwrap_or(Value::Null);
+    if let Some((created_at, updated_at)) = timestamp_overrides_from_value(
+        object
+            .get("timestampOverrides")
+            .or_else(|| object.get("__timestampOverrides")),
+    ) {
+        if let Some(data_object) = data.as_object_mut() {
+            let metadata = data_object
+                .entry("metadata".to_string())
+                .or_insert_with(|| json!({}));
+            if let Some(metadata_object) = metadata.as_object_mut() {
+                metadata_object.insert(
+                    "timestamps".to_string(),
+                    json!({ "createdAt": created_at, "updatedAt": updated_at }),
+                );
+            }
+        }
+    }
     match import_type {
         "marinara_character" => import_st_character_payload(state, data, None, &Value::Null),
         "marinara_persona" => {
+            let mut record_value = with_entity_defaults("personas", data.clone());
+            apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
             let record = state
                 .storage
-                .create("personas", with_entity_defaults("personas", data))?;
+                .create("personas", record_value)?;
             Ok(
                 json!({ "success": true, "type": import_type, "id": record.get("id").cloned().unwrap_or(Value::Null), "name": record.get("name").cloned().unwrap_or(Value::Null) }),
             )
@@ -807,9 +944,11 @@ fn import_marinara_envelope(state: &AppState, envelope: Value) -> AppResult<Valu
             create_lorebook_from_payload(state, &data, "Imported Lorebook", None)
         }
         "marinara_preset" => {
+            let mut record_value = with_entity_defaults("prompts", data.clone());
+            apply_timestamp_overrides(&mut record_value, &Value::Null, &data);
             let record = state
                 .storage
-                .create("prompts", with_entity_defaults("prompts", data))?;
+                .create("prompts", record_value)?;
             Ok(
                 json!({ "success": true, "type": import_type, "id": record.get("id").cloned().unwrap_or(Value::Null), "name": record.get("name").cloned().unwrap_or(Value::Null) }),
             )

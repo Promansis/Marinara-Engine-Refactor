@@ -568,7 +568,7 @@ async fn scene_wrap(state: &AppState, body: Value) -> AppResult<Value> {
         parameters: json!({ "temperature": 0.4, "maxTokens": 2000 }),
     };
     let raw = marinara_llm::complete(request).await?;
-    let parsed = super::scene::parse_json_object_from_text(&raw).unwrap_or(fallback);
+    let parsed = parse_json_object_from_text(&raw).unwrap_or(fallback);
     Ok(parsed)
 }
 

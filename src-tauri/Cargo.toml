@@ -47,6 +47,7 @@ tauri-build = { version = "2", features = [] }
 base64 = "0.22"
 buttplug = "10.0.2"
 buttplug_core = "10.0.2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 pdf-extract = "0.10"
 png = "0.17"
