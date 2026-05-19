@@ -51,7 +51,7 @@ export function CreateConnectionModal({ open, onClose }: Props) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Create Connection" width="max-w-sm">
+    <Modal open={open} onClose={onClose} title="Create Connection" width="max-w-lg">
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 shadow-lg shadow-sky-400/20">
@@ -80,7 +80,7 @@ export function CreateConnectionModal({ open, onClose }: Props) {
 
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium text-[var(--muted-foreground)]">Provider</span>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
             {(Object.entries(PROVIDERS) as [APIProvider, (typeof PROVIDERS)[APIProvider]][])
               .filter(([key]) => isTauriRuntimeProvider(key))
               .map(([key, info]) => (
