@@ -36,6 +36,11 @@
   - Files likely to change: `src/features/generation/hooks/use-generate.ts`, possibly `src/engine/generation/generation-replay.ts` if request shaping needs a helper adjustment.
   - Checks planned: `pnpm typecheck`
 
+- Spotify setup tells users to set a redirect URI env var that native auth ignores.
+  - Status: Ready for review on `fix/spotify-redirect-uri-setup`
+  - Impact area: Spotify agent setup UI, native Spotify OAuth capability contract
+  - Next step: Review the focused local commit and manually confirm the Spotify setup copy in the agent editor.
+
 ## Owned Bugs
 
 ## Connection random-pool toggle can invert stored boolean state
@@ -312,11 +317,9 @@
 
 ### Spotify setup tells users to set a redirect URI env var that native auth ignores
 
-- Status: Resolved
-- Impact area: UI | Rust capability
-- Risk: Medium, setup instructions are misleading for non-loopback/remote auth.
-- Likely owner: `src/features/agents/components/AgentEditor.tsx`, `src-tauri/src/commands/storage/integrations/spotify.rs`
-- Summary: UI copy references `SPOTIFY_REDIRECT_URI`, but both frontend display and Rust OAuth use the hardcoded loopback callback. Either native auth should honor the configured redirect URI or the setup copy should stop advertising an unsupported override.
+- Status: Ready for review on `fix/spotify-redirect-uri-setup`
+- Impact area: Spotify agent setup UI, native Spotify OAuth capability contract
+- Next step: Review the focused local commit and manually confirm the Spotify setup copy in the agent editor.
 
 ### Message translation failures leave no visible error
 
