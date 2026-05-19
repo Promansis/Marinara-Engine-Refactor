@@ -41,8 +41,6 @@ import { SpeechToTextButton } from "../../../shared/components/ui/SpeechToTextBu
 import { QuickConnectionSwitcher } from "./QuickConnectionSwitcher";
 import { QuickPersonaSwitcher } from "./QuickPersonaSwitcher";
 import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
-import { MariThinkingIndicator } from "./MariThinkingIndicator";
-import { MariCapabilityNotice } from "./MariCapabilityNotice";
 import { SlashCommandFeedback } from "./SlashCommandFeedback";
 import { QuickReplyMenu, type QuickReplyAction } from "./QuickReplyMenu";
 
@@ -1231,8 +1229,6 @@ export const ChatInput = memo(function ChatInput({
       )}
 
       {/* Mari capability + thinking indicators */}
-      <MariCapabilityNotice />
-      <MariThinkingIndicator />
 
       {/* Main input container */}
       <div

@@ -29,7 +29,15 @@ function inferDesktopPlatform(): DesktopPlatform {
   return "windows";
 }
 
-export function WindowTitleBar() {
+export function WindowTitleBar({
+  professorMariOpen = false,
+  onOpenProfessorMari,
+  onGoHome,
+}: {
+  professorMariOpen?: boolean;
+  onOpenProfessorMari?: () => void;
+  onGoHome?: () => void;
+}) {
   const platform = useMemo(inferDesktopPlatform, []);
   const [isMaximized, setIsMaximized] = useState(false);
   const appWindow = useMemo(() => (isTauriRuntime() ? getCurrentWindow() : null), []);
@@ -91,7 +99,13 @@ export function WindowTitleBar() {
   const goHome = useCallback(() => {
     setActiveChatId(null);
     closeAllDetails();
-  }, [closeAllDetails, setActiveChatId]);
+    onGoHome?.();
+  }, [closeAllDetails, onGoHome, setActiveChatId]);
+  const openProfessorMari = useCallback(() => {
+    setActiveChatId(null);
+    closeAllDetails();
+    onOpenProfessorMari?.();
+  }, [closeAllDetails, onOpenProfessorMari, setActiveChatId]);
   const controlActions = platform === "darwin" ? (["close", "minimize", "maximize"] as const) : (["minimize", "maximize", "close"] as const);
   const controls = (
     <div
@@ -173,6 +187,31 @@ export function WindowTitleBar() {
           aria-label="Home"
         >
           <Home size="0.875rem" />
+        </button>
+        <button
+          type="button"
+          onClick={openProfessorMari}
+          onMouseDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          className={cn(
+            "mari-titlebar-action relative rounded-md p-1 transition-all duration-200",
+            professorMariOpen
+              ? "mari-titlebar-action-active text-[color-mix(in_srgb,var(--primary)_54%,var(--muted-foreground))]"
+              : "text-[var(--muted-foreground)] hover:text-[var(--primary)]",
+          )}
+          title="Professor Mari"
+          aria-label="Professor Mari"
+          aria-pressed={professorMariOpen}
+        >
+          <img
+            src="/sprites/mari/Mari_profile.png"
+            alt=""
+            className="h-[1.125rem] w-[1.125rem] rounded-md object-cover"
+            draggable={false}
+          />
+          {professorMariOpen && (
+            <span className="absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full bg-gradient-to-r from-teal-500 to-cyan-500" />
+          )}
         </button>
         <span className="mari-chat-title-divider" aria-hidden />
       </div>

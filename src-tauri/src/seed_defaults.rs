@@ -1,7 +1,3 @@
-use crate::builtins::{
-    PROFESSOR_MARI_ASSISTANT_PROMPT_SETTINGS_KEY, PROFESSOR_MARI_AVATAR, PROFESSOR_MARI_CHAT_ID,
-    PROFESSOR_MARI_ID,
-};
 use marinara_core::{now_iso, AppResult};
 use marinara_storage::FileStorage;
 use serde_json::{json, Map, Value};
@@ -14,154 +10,12 @@ const MARINARA_PRESET_AUTHOR: &str = "Marinara";
 
 pub fn seed_bundled_defaults(storage: &FileStorage, default_data: &Path) -> AppResult<()> {
     let db_root = default_data.join("db");
-    seed_professor_mari(storage, &db_root)?;
-    seed_professor_mari_chat(storage, &db_root)?;
+    remove_legacy_professor_mari(storage)?;
     seed_marinara_preset(storage, &db_root)?;
     seed_default_chat_presets(storage)?;
     seed_default_regex_scripts(storage)?;
     seed_default_ui_settings(storage)?;
     Ok(())
-}
-
-fn seed_professor_mari(storage: &FileStorage, db_root: &Path) -> AppResult<()> {
-    let character_path = db_root.join("professor-mari-character.json");
-    if !character_path.exists() {
-        return Ok(());
-    }
-
-    let character_data: Value = serde_json::from_str(&std::fs::read_to_string(character_path)?)?;
-    let serialized = serde_json::to_string(&character_data)?;
-    let record = json!({
-        "id": PROFESSOR_MARI_ID,
-        "data": serialized,
-        "comment": "",
-        "avatarPath": PROFESSOR_MARI_AVATAR,
-        "spriteFolderPath": Value::Null
-    });
-
-    match storage.get("characters", PROFESSOR_MARI_ID)? {
-        Some(existing)
-            if existing.get("data").and_then(Value::as_str) == Some(serialized.as_str())
-                && existing.get("avatarPath").and_then(Value::as_str)
-                    == Some(PROFESSOR_MARI_AVATAR) => {}
-        Some(_) => {
-            storage.patch(
-                "characters",
-                PROFESSOR_MARI_ID,
-                json!({ "data": serialized, "avatarPath": PROFESSOR_MARI_AVATAR }),
-            )?;
-        }
-        None => {
-            storage.create("characters", record)?;
-        }
-    }
-
-    let prompt_path = db_root.join("professor-mari-assistant-prompt.txt");
-    if prompt_path.exists() {
-        storage.upsert_with_id(
-            "app-settings",
-            PROFESSOR_MARI_ASSISTANT_PROMPT_SETTINGS_KEY,
-            json!({ "value": std::fs::read_to_string(prompt_path)? }),
-        )?;
-    }
-
-    Ok(())
-}
-
-fn seed_professor_mari_chat(storage: &FileStorage, db_root: &Path) -> AppResult<()> {
-    let character_path = db_root.join("professor-mari-character.json");
-    if !character_path.exists() {
-        return Ok(());
-    }
-
-    let character_data: Value = serde_json::from_str(&std::fs::read_to_string(character_path)?)?;
-    let first_message = character_data
-        .get("data")
-        .and_then(|data| data.get("first_mes"))
-        .or_else(|| character_data.get("first_mes"))
-        .and_then(Value::as_str)
-        .unwrap_or("Hey! Welcome to Marinara Engine. I'm Mari, your built-in assistant.")
-        .trim()
-        .to_string();
-    let now = now_iso();
-
-    match storage.get("chats", PROFESSOR_MARI_CHAT_ID)? {
-        Some(existing) => {
-            let mut patch = Map::new();
-            patch.insert("mode".to_string(), json!("conversation"));
-            patch.insert("characterIds".to_string(), json!([PROFESSOR_MARI_ID]));
-            patch.insert("protected".to_string(), json!(true));
-            patch.insert("isBuiltIn".to_string(), json!(true));
-            if existing.get("metadata").is_none() {
-                patch.insert("metadata".to_string(), professor_mari_chat_metadata());
-            }
-            storage.patch("chats", PROFESSOR_MARI_CHAT_ID, Value::Object(patch))?;
-        }
-        None => {
-            storage.create(
-                "chats",
-                json!({
-                    "id": PROFESSOR_MARI_CHAT_ID,
-                    "name": "Professor Mari",
-                    "mode": "conversation",
-                    "characterIds": [PROFESSOR_MARI_ID],
-                    "groupId": Value::Null,
-                    "personaId": Value::Null,
-                    "promptPresetId": Value::Null,
-                    "connectionId": Value::Null,
-                    "connectedChatId": Value::Null,
-                    "folderId": Value::Null,
-                    "sortOrder": -1000,
-                    "metadata": professor_mari_chat_metadata(),
-                    "gameState": {},
-                    "protected": true,
-                    "isBuiltIn": true,
-                    "lastMessageAt": now,
-                }),
-            )?;
-        }
-    }
-
-    if storage.get("messages", "professor-mari-welcome")?.is_none() {
-        storage.create(
-            "messages",
-            json!({
-                "id": "professor-mari-welcome",
-                "chatId": PROFESSOR_MARI_CHAT_ID,
-                "role": "assistant",
-                "characterId": PROFESSOR_MARI_ID,
-                "content": first_message.clone(),
-                "extra": {
-                    "displayText": Value::Null,
-                    "isGenerated": false,
-                    "tokenCount": Value::Null,
-                    "generationInfo": Value::Null,
-                    "isConversationStart": true
-                },
-                "activeSwipeIndex": 0,
-                "swipes": [{ "content": first_message.clone() }],
-            }),
-        )?;
-    }
-
-    Ok(())
-}
-
-fn professor_mari_chat_metadata() -> Value {
-    json!({
-        "summary": Value::Null,
-        "tags": ["built-in", "assistant"],
-        "enableAgents": true,
-        "agentOverrides": {},
-        "activeAgentIds": [],
-        "activeToolIds": [],
-        "presetChoices": {},
-        "enableMemoryRecall": true,
-        "characterCommands": true,
-        "conversationSchedulesEnabled": false,
-        "isBuiltInAssistant": true,
-        "protected": true
-    })
 }
 
 fn seed_marinara_preset(storage: &FileStorage, db_root: &Path) -> AppResult<()> {
@@ -190,6 +44,27 @@ fn seed_marinara_preset(storage: &FileStorage, db_root: &Path) -> AppResult<()> 
     seed_related_prompt_rows_if_missing(storage, "prompt-groups", data.get("groups"))?;
     seed_related_prompt_rows_if_missing(storage, "prompt-sections", data.get("sections"))?;
     seed_related_prompt_rows_if_missing(storage, "prompt-variables", data.get("choiceBlocks"))?;
+    Ok(())
+}
+
+fn remove_legacy_professor_mari(storage: &FileStorage) -> AppResult<()> {
+    for id in ["__professor_mari__", "professor-mari"] {
+        if storage.get("characters", id)?.is_some() {
+            storage.delete("characters", id)?;
+        }
+    }
+    if storage.get("chats", "__professor_mari_chat__")?.is_some() {
+        storage.delete("chats", "__professor_mari_chat__")?;
+    }
+    if storage.get("messages", "professor-mari-welcome")?.is_some() {
+        storage.delete("messages", "professor-mari-welcome")?;
+    }
+    if storage
+        .get("app-settings", "professor-mari-assistant-prompt")?
+        .is_some()
+    {
+        storage.delete("app-settings", "professor-mari-assistant-prompt")?;
+    }
     Ok(())
 }
 

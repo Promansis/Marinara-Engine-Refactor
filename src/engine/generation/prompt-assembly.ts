@@ -22,9 +22,6 @@ import {
   type JsonRecord,
 } from "./runtime-records";
 
-const PROFESSOR_MARI_ID = "__professor_mari__";
-const MARI_ASSISTANT_PROMPT_SETTINGS_KEY = "professor-mari-assistant-prompt";
-
 export interface GenerationCharacterContext {
   id: string;
   name: string;
@@ -589,31 +586,12 @@ function renderJsonBlock(label: string, value: unknown): string {
   return `${label}:\n${JSON.stringify(record, null, 2).slice(0, 4000)}`;
 }
 
-function mariContextBlock(chat: JsonRecord): string {
-  const meta = parseRecord(chat.metadata);
-  const mariContext = parseRecord(meta.mariContext);
-  const entries = Object.entries(mariContext)
-    .map(([key, value]) => {
-      const text = readString(value).trim();
-      return text ? `### ${key}\n${text}` : "";
-    })
-    .filter(Boolean);
-  return entries.length ? `Fetched app context:\n${entries.join("\n\n")}` : "";
-}
-
-async function loadMariAssistantPrompt(storage: StorageGateway, characters: GenerationCharacterContext[]): Promise<string> {
-  if (!characters.some((character) => character.id === PROFESSOR_MARI_ID)) return "";
-  const record = await storage.get<JsonRecord>("app-settings", MARI_ASSISTANT_PROMPT_SETTINGS_KEY);
-  return readString(record?.value).trim();
-}
-
 function fallbackSystemPrompt(input: PromptAssemblyInput, args: {
   characters: GenerationCharacterContext[];
   persona: GenerationPersonaContext | null;
   worldBefore: string;
   worldAfter: string;
   summary: string | null;
-  mariContext: string;
 }): string {
   const mode = readString(input.chat.mode || input.chat.chatMode, "conversation");
   const meta = parseRecord(input.chat.metadata);
@@ -623,7 +601,6 @@ function fallbackSystemPrompt(input: PromptAssemblyInput, args: {
     args.worldBefore,
     args.worldAfter,
     args.summary ? `Summary:\n${args.summary}` : "",
-    args.mariContext,
   ];
 
   if (mode === "game") {
@@ -1030,8 +1007,6 @@ export async function assembleGenerationPrompt(
     input.latestUserInput,
     readNumber(input.connection.maxContext, 0) || undefined,
   );
-  const fetchedContextBlock = mariContextBlock(input.chat);
-  const mariAssistantPrompt = await loadMariAssistantPrompt(storage, characters);
   const defaultPrompt = await loadDefaultPromptId(storage);
   const presetId = promptPresetId(input.chat, input.connection, input.request, defaultPrompt);
   const wrapFormat = (readString(input.chat.wrapFormat) || readString(input.connection.wrapFormat) || "xml") as WrapFormat;
@@ -1089,7 +1064,6 @@ export async function assembleGenerationPrompt(
         worldBefore: processedLore.worldInfoBefore,
         worldAfter: processedLore.worldInfoAfter,
         summary,
-        mariContext: fetchedContextBlock,
       }),
       contextKind: "prompt",
     });
@@ -1117,14 +1091,6 @@ export async function assembleGenerationPrompt(
     }
     messages.push(gameReminder!);
   } else {
-    if (chatMode === "conversation" && mariAssistantPrompt) {
-      const firstSystemIndex = messages.findIndex((message) => message.role === "system");
-      messages.splice(firstSystemIndex >= 0 ? firstSystemIndex + 1 : 0, 0, {
-        role: "system",
-        content: mariAssistantPrompt,
-        contextKind: "prompt",
-      });
-    }
     const sceneBlock = buildRoleplayScenePromptBlock(input.chat, characters, persona);
     if (sceneBlock) {
       const firstSystemIndex = messages.findIndex((message) => message.role === "system");
@@ -1141,15 +1107,6 @@ export async function assembleGenerationPrompt(
     messages.splice(insertAt >= 0 ? insertAt : messages.length, 0, {
       role: "system",
       content: memoryRecallBlock,
-      contextKind: "prompt",
-    });
-  }
-
-  if (fetchedContextBlock && messages.length > 0 && !messages.some((message) => message.content.includes("Fetched app context:"))) {
-    const insertAt = messages.findIndex((message) => message.role === "user" || message.role === "assistant");
-    messages.splice(insertAt >= 0 ? insertAt : messages.length, 0, {
-      role: "system",
-      content: fetchedContextBlock,
       contextKind: "prompt",
     });
   }

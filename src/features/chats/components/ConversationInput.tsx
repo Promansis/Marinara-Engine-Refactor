@@ -46,8 +46,6 @@ import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
 import { EmojiPicker } from "../../../shared/components/ui/EmojiPicker";
 import { GifPicker } from "../../../shared/components/ui/GifPicker";
 import { SpeechToTextButton } from "../../../shared/components/ui/SpeechToTextButton";
-import { MariThinkingIndicator } from "./MariThinkingIndicator";
-import { MariCapabilityNotice } from "./MariCapabilityNotice";
 import { SlashCommandFeedback } from "./SlashCommandFeedback";
 import { QuickReplyMenu, type QuickReplyAction } from "./QuickReplyMenu";
 import type { Message } from "../../../engine/contracts/types/chat";
@@ -1592,8 +1590,6 @@ export function ConversationInput({
       )}
 
       {/* Mari capability + thinking indicators */}
-      <MariCapabilityNotice />
-      <MariThinkingIndicator />
 
       {/* Input bar */}
       <div

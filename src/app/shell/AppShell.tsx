@@ -47,6 +47,9 @@ const BotBrowserView = lazy(() =>
 const GameAssetsBrowserView = lazy(() =>
   import("../../features/game-assets/components/GameAssetsBrowserView").then((module) => ({ default: module.GameAssetsBrowserView })),
 );
+const ProfessorMariSurface = lazy(() =>
+  import("../../features/mari/components/ProfessorMariSurface").then((module) => ({ default: module.ProfessorMariSurface })),
+);
 const RightPanel = lazy(() => import("./RightPanel").then((module) => ({ default: module.RightPanel })));
 const TrackerDataSidebar = lazy(() =>
   import("../../features/tracker/components/TrackerDataSidebar").then((module) => ({ default: module.TrackerDataSidebar })),
@@ -140,6 +143,7 @@ export function AppShell() {
   const [rightPanelDragWidth, setRightPanelDragWidth] = useState<number | null>(null);
   const [trackerPanelDragWidth, setTrackerPanelDragWidth] = useState<number | null>(null);
   const [activeChatSidebarTab, setActiveChatSidebarTab] = useState<ChatSidebarTab>("conversation");
+  const [professorMariOpen, setProfessorMariOpen] = useState(false);
   const sidebarDragWidthRef = useRef<number | null>(null);
   const rightPanelDragWidthRef = useRef<number | null>(null);
   const trackerPanelDragWidthRef = useRef<number | null>(null);
@@ -255,6 +259,10 @@ export function AppShell() {
   const [trackerPanelToggleAnchorY, setTrackerPanelToggleAnchorY] = useState<number | null>(null);
   const trackerPanelWasActiveRef = useRef(false);
   const lastAutonomousUnreadClearRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (activeChatId) setProfessorMariOpen(false);
+  }, [activeChatId]);
 
   useEffect(() => {
     if (!activeChatId || isClearingAutonomousUnread) return;
@@ -476,8 +484,11 @@ export function AppShell() {
 
   const showAmbientDecor = isPageActive && !activeChatId && !detailView && !botBrowserOpen && !gameAssetsBrowserOpen;
   const hasDetailView = detailView != null;
+  useEffect(() => {
+    if (hasDetailView) setProfessorMariOpen(false);
+  }, [hasDetailView]);
   const trackerPanelActive = trackerPanelEnabled && trackerPanelOpen;
-  const trackerPanelSurfaceAvailable = !botBrowserOpen && !gameAssetsBrowserOpen && !hasDetailView;
+  const trackerPanelSurfaceAvailable = !botBrowserOpen && !gameAssetsBrowserOpen && !hasDetailView && !professorMariOpen;
   const trackerPanelVisible = trackerPanelActive && trackerPanelSurfaceAvailable;
   useEffect(() => {
     if (trackerPanelVisible) {
@@ -765,7 +776,11 @@ export function AppShell() {
       )}
 
       <header data-component="AppChrome" className="mari-app-chrome relative z-40 flex shrink-0 flex-col overflow-hidden">
-        <WindowTitleBar />
+        <WindowTitleBar
+          professorMariOpen={professorMariOpen}
+          onOpenProfessorMari={() => setProfessorMariOpen(true)}
+          onGoHome={() => setProfessorMariOpen(false)}
+        />
         <TopBar />
       </header>
 
@@ -843,7 +858,9 @@ export function AppShell() {
               } as CSSProperties
             }
           >
-            <Suspense fallback={<MainPaneFallback />}>{detailView ?? <ModeSurface />}</Suspense>
+            <Suspense fallback={<MainPaneFallback />}>
+              {professorMariOpen ? <ProfessorMariSurface /> : detailView ?? <ModeSurface />}
+            </Suspense>
           </div>
         </div>
         {/* Floating avatar notification bubbles (right edge) */}

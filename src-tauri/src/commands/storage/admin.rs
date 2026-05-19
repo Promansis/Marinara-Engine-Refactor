@@ -36,6 +36,7 @@ pub(crate) fn admin_expunge(state: &AppState, body: Value) -> AppResult<Value> {
                 clear_collections(
                     state,
                     &[
+                        "characters",
                         "character-groups",
                         "character-versions",
                         "character-gallery",
@@ -43,8 +44,6 @@ pub(crate) fn admin_expunge(state: &AppState, body: Value) -> AppResult<Value> {
                     ],
                     &mut cleared_collections,
                 )?;
-                preserve_professor_mari(state)?;
-                cleared_collections.push("characters".to_string());
             }
             "personas" => clear_collections(
                 state,
@@ -119,41 +118,6 @@ fn clear_collections(
         cleared.push((*collection).to_string());
     }
     Ok(())
-}
-
-fn preserve_professor_mari(state: &AppState) -> AppResult<()> {
-    let kept = state
-        .storage
-        .list("characters")?
-        .into_iter()
-        .filter(is_professor_mari)
-        .collect::<Vec<_>>();
-    state.storage.replace_all("characters", kept)
-}
-
-fn is_professor_mari(character: &Value) -> bool {
-    let name = character_name(character).to_ascii_lowercase();
-    name.contains("professor mari")
-        || character.get("id").and_then(Value::as_str) == Some("professor-mari")
-}
-
-fn character_name(character: &Value) -> String {
-    character
-        .get("name")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            character
-                .get("data")
-                .and_then(Value::as_str)
-                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-                .and_then(|data| {
-                    data.get("name")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned)
-                })
-        })
-        .unwrap_or_default()
 }
 
 fn clear_runtime_media(state: &AppState) -> AppResult<()> {
