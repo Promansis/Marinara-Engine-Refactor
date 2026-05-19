@@ -338,7 +338,6 @@
 - Risk: Medium, setup UI can attach to the wrong active chat after async creation work.
 - Likely owner: `src/shared/stores/chat.store.ts`, `src/features/characters/hooks/use-start-chat-from-character.ts`, `src/features/chats/components/NewChatConnectionGate.tsx`, `src/features/modes/components/ModeSurface.tsx`
 - Summary: New-chat flows store setup intent in global booleans, then `ModeSurface` consumes them against the current `activeChatId`. If the user switches chats while preset/greeting work is still running, the wizard/settings drawer can open on an unrelated chat. The intent should carry a target chat id and mode.
-
 ## Status Notes
 
 - Bug 15 keeps the fix in the shell UI layer; no engine, shared API, storage, or Rust capability behavior is expected to change.
