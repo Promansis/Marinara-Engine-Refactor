@@ -87,6 +87,16 @@
 - Last updated: 2026-05-19
 - Notes: Agent-emitted haptic commands now bridge through `integrationGateway.haptic.command`; generation keeps the haptic bridge ordered with a small send interval to avoid overwhelming the native device path.
 
+## Profile import leaves stale asset files behind
+
+- Status: In review
+- Owner: Promansis
+- Impact area: UI | Rust capability
+- Reported: 2026-05-19
+- Last updated: 2026-05-19
+- Branch: `fix/profile-import-clears-stale-assets`
+- Next step: Verify the new profile asset clearing path on a full import/restore flow.
+
 ## Suggested Fix Order
 
 1. **Filesystem safety and data loss risks**: symlink escapes, profile import stale assets, tracker edits lost on reload.
@@ -247,11 +257,13 @@
 
 ### Profile import leaves stale asset files behind
 
-- Status: Resolved
+- Status: In review
+- Owner: Promansis
 - Impact area: UI | Rust capability
-- Risk: Medium-high, profile restore can show files that are no longer in the restored profile.
-- Likely owner: `src-tauri/src/commands/storage/profile.rs`
-- Summary: `import_profile_collections` replaces storage collections, but `restore_profile_assets` only writes exported files and does not clear existing asset directories first. Asset browsers enumerate disk directly, so stale backgrounds, fonts, sprites, and knowledge-source files remain visible.
+- Reported: 2026-05-19
+- Last updated: 2026-05-19
+- Branch: `fix/profile-import-clears-stale-assets`
+- Next step: Verify the new profile asset clearing path on a full import/restore flow.
 
 ### Reloading immediately after tracker edits can lose pending world state
 
