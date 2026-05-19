@@ -8,6 +8,13 @@
   - Next step: Manual smoke in the desktop app: toggle random-pool membership from Connections and quick switchers, then verify preset default badges after setting a default.
   - Blockers: None.
 
+- Bug 15: Mobile shell panels leave hidden content in the tab order.
+  - Status: In progress
+  - Last updated: 2026-05-19
+  - Branch: `fix/bug-15-mobile-panel-focus`
+  - Worktree: `../Marinara-Engine-Refactor-bug15`
+  - Next step: verify typecheck and mobile keyboard focus behavior.
+
 ## Owned Bugs
 
 ## Connection random-pool toggle can invert stored boolean state
@@ -18,6 +25,17 @@
 - Reported: Local backlog item 17
 - Last updated: 2026-05-19
 - Notes: Boolish reads now accept boolean `true` and legacy string truth values in connection UI and dependent random/default connection resolvers; writes remain boolean.
+
+## Mobile shell panels leave hidden content in the tab order
+
+- Status: In progress
+- Owner: Promansis
+- Impact area: UI
+- Reported: 2026-05-19
+- Last updated: 2026-05-19
+- Branch: `fix/bug-15-mobile-panel-focus`
+- Worktree: `../Marinara-Engine-Refactor-bug15`
+- Next step: verify typecheck and mobile keyboard focus behavior.
 
 ## Suggested Fix Order
 
@@ -256,4 +274,4 @@
 
 ## Status Notes
 
-No status notes currently listed.
+- Bug 15 keeps the fix in the shell UI layer; no engine, shared API, storage, or Rust capability behavior is expected to change.
