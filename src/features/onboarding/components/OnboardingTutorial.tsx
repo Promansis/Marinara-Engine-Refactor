@@ -96,6 +96,43 @@ interface Rect {
 }
 
 const PAD = 8; // px padding around the spotlight cutout
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "textarea:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function getFocusableElements(root: HTMLElement) {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((element) => {
+    if (element.closest("[inert]")) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden";
+  });
+}
+
+function setInert(element: Element, inert: boolean) {
+  element.toggleAttribute("inert", inert);
+  (element as HTMLElement & { inert?: boolean }).inert = inert;
+}
+
+function setShellInertExceptTutorial(root: HTMLElement, inert: boolean) {
+  const shell = root.closest('[data-component="AppShell"]');
+  if (!shell) return;
+
+  for (const child of Array.from(shell.children)) {
+    if (!child.contains(root)) {
+      setInert(child, inert);
+      continue;
+    }
+
+    for (const nestedChild of Array.from(child.children)) {
+      if (nestedChild !== root) setInert(nestedChild, inert);
+    }
+  }
+}
 
 function getTargetRect(target: string): Rect | null {
   const el = document.querySelector(`[data-tour="${target}"]`);
@@ -322,6 +359,8 @@ function OnboardingTutorialInner() {
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const rafRef = useRef<number>(0);
   const prevStepRef = useRef(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const currentStep = STEPS[step];
   const isLast = step === STEPS.length - 1;
@@ -395,6 +434,69 @@ function OnboardingTutorialInner() {
 
   const finish = useCallback(() => setCompleted(true), [setCompleted]);
 
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setShellInertExceptTutorial(root, true);
+
+    const focusFirstControl = () => {
+      if (!root.contains(document.activeElement)) {
+        const [firstFocusable] = getFocusableElements(root);
+        (firstFocusable ?? root).focus();
+      }
+    };
+
+    const frame = window.requestAnimationFrame(focusFirstControl);
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+
+      const focusable = getFocusableElements(root);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        root.focus();
+        return;
+      }
+
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const active = document.activeElement;
+
+      if (!root.contains(active)) {
+        event.preventDefault();
+        first.focus();
+        return;
+      }
+
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Node && root.contains(event.target)) return;
+      const [firstFocusable] = getFocusableElements(root);
+      (firstFocusable ?? root).focus();
+    };
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("focusin", handleFocusIn, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("focusin", handleFocusIn, true);
+      setShellInertExceptTutorial(root, false);
+      const previousFocus = previousFocusRef.current;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, []);
+
   const handleAction = useCallback(
     (key: string) => {
       if (key === "import") {
@@ -420,7 +522,14 @@ function OnboardingTutorialInner() {
   const isCentered = !currentStep.target || !targetRect;
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[9999]">
+    <div
+      ref={rootRef}
+      role="dialog"
+      aria-label="Onboarding tutorial"
+      aria-modal="true"
+      tabIndex={-1}
+      className="pointer-events-none fixed inset-0 z-[9999]"
+    >
       {/* Pulsing highlight ring around the target element */}
       {targetRect && (
         <div
