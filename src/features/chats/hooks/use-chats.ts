@@ -735,6 +735,10 @@ function messageHiddenFromAi(message: Message) {
   return extra.hiddenFromAI === true || extra.hiddenFromAi === true;
 }
 
+function isStoredBooleanTrue(value: unknown): boolean {
+  return value === true || value === "true" || value === "1";
+}
+
 function compactTranscript(messages: Message[]) {
   return messages
     .map((message, index) => {
@@ -748,7 +752,8 @@ async function resolveSummaryConnectionId(chat: Chat): Promise<string> {
   if (typeof chat.connectionId === "string" && chat.connectionId.trim()) return chat.connectionId.trim();
   const connections = await storageApi.list<Record<string, unknown>>("connections");
   const selected =
-    connections.find((connection) => connection.isDefault === true || connection.default === true) ?? connections[0];
+    connections.find((connection) => isStoredBooleanTrue(connection.isDefault) || isStoredBooleanTrue(connection.default)) ??
+    connections[0];
   const connectionId = typeof selected?.id === "string" ? selected.id.trim() : "";
   if (!connectionId) throw new Error("No API connection configured for summary generation.");
   return connectionId;

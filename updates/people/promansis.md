@@ -2,12 +2,22 @@
 
 ## Current Work
 
-No current work listed.
-
-
-
+- Boolean configuration normalization
+  - Status: Fixed locally on `fix/boolish-config-normalization`
+  - Impact area: Connections quick switchers, random connection resolution, prompt preset default display/default lookup
+  - Next step: Manual smoke in the desktop app: toggle random-pool membership from Connections and quick switchers, then verify preset default badges after setting a default.
+  - Blockers: None.
 
 ## Owned Bugs
+
+## Connection random-pool toggle can invert stored boolean state
+
+- Status: Fixed locally on `fix/boolish-config-normalization`
+- Owner: Promansis
+- Impact area: Connections UI, quick switchers, random connection resolvers
+- Reported: Local backlog item 17
+- Last updated: 2026-05-19
+- Notes: Boolish reads now accept boolean `true` and legacy string truth values in connection UI and dependent random/default connection resolvers; writes remain boolean.
 
 ## Suggested Fix Order
 
@@ -243,8 +253,6 @@ No current work listed.
 - Risk: Medium, setup UI can attach to the wrong active chat after async creation work.
 - Likely owner: `src/shared/stores/chat.store.ts`, `src/features/characters/hooks/use-start-chat-from-character.ts`, `src/features/chats/components/NewChatConnectionGate.tsx`, `src/features/modes/components/ModeSurface.tsx`
 - Summary: New-chat flows store setup intent in global booleans, then `ModeSurface` consumes them against the current `activeChatId`. If the user switches chats while preset/greeting work is still running, the wizard/settings drawer can open on an unrelated chat. The intent should carry a target chat id and mode.
-
-
 
 ## Status Notes
 
