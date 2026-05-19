@@ -2,14 +2,22 @@
 
 ## Current Work
 
+<<<<<<< HEAD
 - Message translation failures leave no visible error
   - Status: Fixed locally on `fix/bug-19-translation-errors`
   - Impact area: UI, shared/api, Rust capability error surface
   - Next step: Manual smoke in the desktop app with an invalid translation provider/API setup to confirm the toast copy and loading reset.
+=======
+- Boolean configuration normalization
+  - Status: Fixed locally on `fix/boolish-config-normalization`
+  - Impact area: Connections quick switchers, random connection resolution, prompt preset default display/default lookup
+  - Next step: Manual smoke in the desktop app: toggle random-pool membership from Connections and quick switchers, then verify preset default badges after setting a default.
+>>>>>>> 87cdb49 (config: normalize boolish persisted flags)
   - Blockers: None.
 
 ## Owned Bugs
 
+<<<<<<< HEAD
 ## Message translation failures leave no visible error
 
 - Status: Fixed locally on `fix/bug-19-translation-errors`
@@ -75,6 +83,25 @@
 - Failing behavior: `gameApi.startSession` creates the next session with only setup/map/NPC metadata, dropping durable inventory, widget state, time/weather, morale, notes, journal, and the stored `chat.gameState`.
 - Owner: `src/features/game/api/game-api.ts`; dependent readers are `GameSurface`, `useSyncGameState`, world-state hydration, and game prompt assembly.
 - Resolution: new sessions now carry durable game metadata and `chat.gameState` while leaving combat-only session state behind.
+=======
+## Connection random-pool toggle can invert stored boolean state
+
+- Status: Fixed locally on `fix/boolish-config-normalization`
+- Owner: Promansis
+- Impact area: Connections UI, quick switchers, random connection resolvers
+- Reported: Local backlog item 17
+- Last updated: 2026-05-19
+- Notes: Boolish reads now accept boolean `true` and legacy string truth values in connection UI and dependent random/default connection resolvers; writes remain boolean.
+
+## Prompt preset default badge does not recognize boolean defaults
+
+- Status: Fixed locally on `fix/boolish-config-normalization`
+- Owner: Promansis
+- Impact area: Prompt presets panel and default preset lookup
+- Reported: Local backlog item 18
+- Last updated: 2026-05-19
+- Notes: Prompt preset default list display and default lookup now accept boolean `true` and legacy string truth values.
+>>>>>>> 87cdb49 (config: normalize boolish persisted flags)
 
 ## Status Notes
 
