@@ -22,6 +22,12 @@
   - Worktree: `../Marinara-Engine-Refactor-bug16`
   - Next step: verify typecheck and tutorial keyboard focus behavior.
 
+- Bug 19: Message translation failures leave no visible error.
+  - Status: Fixed locally on `fix/bug-19-translation-errors`
+  - Impact area: UI, shared/api, Rust capability error surface
+  - Next step: Manual smoke in the desktop app with an invalid translation provider/API setup to confirm the toast copy and loading reset.
+  - Blockers: None.
+
 ## Owned Bugs
 
 ## Connection random-pool toggle can invert stored boolean state
@@ -54,6 +60,15 @@
 - Branch: `fix/bug-16-onboarding-focus-trap`
 - Worktree: `../Marinara-Engine-Refactor-bug16`
 - Next step: verify typecheck and tutorial keyboard focus behavior.
+
+## Message translation failures leave no visible error
+
+- Status: Fixed locally on `fix/bug-19-translation-errors`
+- Owner: Promansis
+- Impact area: UI | shared/api | Rust capability error surface
+- Reported: Local backlog item 19
+- Last updated: 2026-05-19
+- Notes: `useTranslate.translate` now owns visible error reporting for rejected translation calls; message action callers explicitly consume the async request while keeping hide/show behavior unchanged. `pnpm typecheck` passes.
 
 ## Suggested Fix Order
 
@@ -294,3 +309,4 @@
 
 - Bug 15 keeps the fix in the shell UI layer; no engine, shared API, storage, or Rust capability behavior is expected to change.
 - Bug 16 keeps the fix in onboarding UI; no engine, shared API, storage, or Rust capability behavior is expected to change.
+- Bug 19 keeps the fix in message translation UI/error surfacing; no engine, storage, or broader capability behavior is expected to change.
