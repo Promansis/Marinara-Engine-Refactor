@@ -10,7 +10,6 @@ import {
   Theater,
   GitBranch,
   AlertTriangle,
-  X,
   Circle,
   Moon,
   MinusCircle,
@@ -30,12 +29,9 @@ import {
 import {
   useBulkExportChats,
   useChats,
-  useCreateChat,
   useDeleteChat,
   useDeleteChatGroup,
 } from "../../features/chats/hooks/use-chats";
-import { useChatPresets, useApplyChatPreset } from "../../features/chat-presets/hooks/use-chat-presets";
-import { useConnections } from "../../features/connections/hooks/use-connections";
 import {
   useChatFolders,
   useCreateFolder,
@@ -50,12 +46,14 @@ import { showConfirmDialog } from "../../shared/lib/app-dialogs";
 import { useUIStore, type UserStatus } from "../../shared/stores/ui.store";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../shared/lib/utils";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import type { Chat, ChatFolder, ChatMode } from "../../engine/contracts/types/chat";
+import type { Chat, ChatFolder } from "../../engine/contracts/types/chat";
 import { Modal } from "../../shared/components/ui/Modal";
 import { Reorder, useDragControls } from "framer-motion";
 import { parseChatMetadata } from "../../shared/lib/chat-display";
+import { useStartNewChat } from "./useStartNewChat";
 
 type ChatSortOption = "newest" | "oldest" | "name-asc" | "name-desc";
+export type ChatSidebarTab = "conversation" | "roleplay" | "game";
 
 const PROFESSOR_MARI_CHAT_ID = "__professor_mari_chat__";
 
@@ -123,12 +121,14 @@ const MODE_CONFIG: Record<
   },
 };
 
-export function ChatSidebar() {
+export function ChatSidebar({
+  activeTab,
+  onActiveTabChange,
+}: {
+  activeTab: ChatSidebarTab;
+  onActiveTabChange: (tab: ChatSidebarTab) => void;
+}) {
   const { data: chats, isError: chatsError, isLoading, isFetching, refetch: refetchChats } = useChats();
-  const { data: connections } = useConnections();
-  const createChat = useCreateChat();
-  const { data: chatPresetsData } = useChatPresets();
-  const applyChatPreset = useApplyChatPreset();
   const deleteChat = useDeleteChat();
   const deleteChatGroup = useDeleteChatGroup();
   const bulkExportChats = useBulkExportChats();
@@ -141,7 +141,7 @@ export function ChatSidebar() {
   const editorDirty = useUIStore((s) => s.editorDirty);
   const closeAllDetails = useUIStore((s) => s.closeAllDetails);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
-  const setPendingNewChatMode = useChatStore((s) => s.setPendingNewChatMode);
+  const startNewChat = useStartNewChat();
 
   // Folder hooks
   const { data: folders } = useChatFolders();
@@ -190,7 +190,6 @@ export function ChatSidebar() {
   const [sort, setSort] = useState<ChatSortOption>("newest");
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [tagsExpanded, setTagsExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<"conversation" | "roleplay" | "game">("conversation");
   const [deleteTarget, setDeleteTarget] = useState<{
     chatId: string;
     groupId: string | null;
@@ -408,7 +407,7 @@ export function ChatSidebar() {
     if (!s.tabSynced) {
       const chatMode = chat.mode as "conversation" | "roleplay" | "game";
       if (chatMode === "conversation" || chatMode === "roleplay" || chatMode === "game") {
-        setActiveTab(chatMode);
+        onActiveTabChange(chatMode);
       }
       // Clear search so the active chat isn't hidden by a stale filter.
       // Skip when the navigation originated from a sidebar click (the
@@ -452,59 +451,9 @@ export function ChatSidebar() {
     }
   }, [activeChatId, chats, folders, updateFolderMut]);
 
-  const handleNewChat = useCallback(
-    (mode: ChatMode) => {
-      const connectionRows = ((connections ?? []) as Array<{ id: string }>).filter((connection) => !!connection.id);
-      if (connectionRows.length === 0) {
-        if (mode === "conversation" || mode === "roleplay" || mode === "game") {
-          setPendingNewChatMode(mode);
-        }
-        return;
-      }
-
-      // Close any open detail editors so the chat area is visible
-      if (hasAnyDetailOpen()) {
-        closeAllDetails();
-      }
-      // Resolve the user's starred default preset for this mode (only modes with presets).
-      const presets = chatPresetsData ?? [];
-      const presetMode: ChatMode | null = mode === "conversation" || mode === "roleplay" ? mode : null;
-      const starred = presetMode
-        ? (presets.find((p) => p.mode === presetMode && p.isActive && !p.isDefault) ?? null)
-        : null;
-      createChat.mutate(
-        { name: `New ${MODE_CONFIG[mode]?.label ?? mode}`, mode, characterIds: [] },
-        {
-          onSuccess: async (chat) => {
-            setActiveChatId(chat.id);
-            if (starred) {
-              try {
-                await applyChatPreset.mutateAsync({ presetId: starred.id, chatId: chat.id });
-              } catch {
-                /* non-fatal — chat still opens with system defaults */
-              }
-            }
-            useChatStore.getState().setShouldOpenSettings(true);
-            useChatStore.getState().setShouldOpenWizard(true);
-          },
-        },
-      );
-    },
-    [
-      connections,
-      createChat,
-      setActiveChatId,
-      setPendingNewChatMode,
-      hasAnyDetailOpen,
-      closeAllDetails,
-      chatPresetsData,
-      applyChatPreset,
-    ],
-  );
-
   const handleNewChatFromTab = useCallback(() => {
-    handleNewChat(activeTab);
-  }, [handleNewChat, activeTab]);
+    startNewChat(activeTab);
+  }, [activeTab, startNewChat]);
 
   // ── Folder handlers ──
   const handleCreateFolder = useCallback(() => {
@@ -862,23 +811,15 @@ export function ChatSidebar() {
       {/* Header */}
       <div className="mari-sidebar-header relative flex h-12 items-center justify-between bg-[var(--card)]/80 px-4 backdrop-blur-sm">
         <div className="absolute inset-x-0 bottom-0 h-px bg-[var(--border)]/30" />
-        <h2 className="retro-glow-text text-sm font-bold tracking-tight">✧ Chats</h2>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleNewChatFromTab}
-            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)] hover:text-[var(--primary)] active:scale-90"
-            title={`New ${activeTab === "conversation" ? "Conversation" : activeTab === "game" ? "Game" : "Roleplay"}`}
-          >
-            <Plus size="1rem" />
-          </button>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)] hover:text-[var(--primary)] active:scale-90 md:hidden"
-            title="Close"
-          >
-            <X size="1rem" />
-          </button>
-        </div>
+        <h2 className="retro-glow-text truncate text-sm font-bold tracking-tight">✧ Chats</h2>
+        <button
+          onClick={handleNewChatFromTab}
+          className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)] hover:text-[var(--primary)] active:scale-90"
+          title={`New ${activeTab === "conversation" ? "Conversation" : activeTab === "game" ? "Game" : "Roleplay"}`}
+          aria-label={`New ${activeTab === "conversation" ? "Conversation" : activeTab === "game" ? "Game" : "Roleplay"}`}
+        >
+          <Plus size="1rem" />
+        </button>
       </div>
 
       {/* Tabs */}
@@ -891,7 +832,7 @@ export function ChatSidebar() {
           return (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => onActiveTabChange(tab)}
               className={cn(
                 "relative flex min-h-[2.125rem] flex-1 items-center justify-center gap-1.5 overflow-visible rounded-lg px-2 py-2 text-xs leading-normal font-medium transition-all",
                 isActive

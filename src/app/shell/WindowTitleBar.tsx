@@ -1,7 +1,10 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Maximize2, Minus, Square, X } from "lucide-react";
+import { Home, Maximize2, Minus, PanelLeft, PanelLeftClose, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { cn } from "../../shared/lib/utils";
+import { useChatStore } from "../../shared/stores/chat.store";
+import { useUIStore } from "../../shared/stores/ui.store";
+import { PanelNavButtons } from "./PanelNavButtons";
 
 type DesktopPlatform = "darwin" | "windows" | "linux";
 
@@ -30,6 +33,10 @@ export function WindowTitleBar() {
   const platform = useMemo(inferDesktopPlatform, []);
   const [isMaximized, setIsMaximized] = useState(false);
   const appWindow = useMemo(() => (isTauriRuntime() ? getCurrentWindow() : null), []);
+  const setActiveChatId = useChatStore((s) => s.setActiveChatId);
+  const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const closeAllDetails = useUIStore((s) => s.closeAllDetails);
 
   const refreshMaximized = useCallback(() => {
     if (!appWindow) return;
@@ -81,7 +88,10 @@ export function WindowTitleBar() {
   const toggleMaximizeFromDragRegion = useCallback(() => {
     runWindowAction("maximize");
   }, [runWindowAction]);
-
+  const goHome = useCallback(() => {
+    setActiveChatId(null);
+    closeAllDetails();
+  }, [closeAllDetails, setActiveChatId]);
   const controlActions = platform === "darwin" ? (["close", "minimize", "maximize"] as const) : (["minimize", "maximize", "close"] as const);
   const controls = (
     <div
@@ -126,26 +136,68 @@ export function WindowTitleBar() {
   return (
     <header
       data-component="WindowTitleBar"
-      data-tauri-drag-region
-      className="mari-window-titlebar relative z-40 flex shrink-0 items-center overflow-hidden -mb-1"
+      className="mari-window-titlebar relative z-40 flex shrink-0 items-center overflow-visible"
       onMouseDown={startWindowDrag}
       onDoubleClick={toggleMaximizeFromDragRegion}
     >
       {platform === "darwin" && controls}
+      <div className="mari-chat-title-controls flex h-full shrink-0 items-center gap-1.5 pl-2.5 pr-2">
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          onMouseDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          data-tour="sidebar-toggle"
+          className={cn(
+            "relative rounded-md p-1.5 transition-all duration-200 active:scale-95",
+            sidebarOpen
+              ? "bg-[var(--accent)] text-[var(--primary)] shadow-sm"
+              : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]/70 hover:text-[var(--primary)]",
+          )}
+          title={sidebarOpen ? "Close chats" : "Open chats"}
+          aria-label={sidebarOpen ? "Close chats" : "Open chats"}
+          aria-pressed={sidebarOpen}
+        >
+          {sidebarOpen ? <PanelLeftClose size="0.875rem" /> : <PanelLeft size="0.875rem" />}
+        </button>
+        <button
+          type="button"
+          onClick={goHome}
+          onMouseDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-all duration-200 hover:bg-[var(--accent)]/70 hover:text-[var(--primary)] active:scale-95"
+          title="Home"
+          aria-label="Home"
+        >
+          <Home size="0.875rem" />
+        </button>
+        <span className="mari-chat-title-divider" aria-hidden />
+      </div>
       <div
-        data-tauri-drag-region
-        className="mari-title-drag-region flex h-full min-w-0 flex-1 items-center justify-start px-3"
-        onMouseDown={startWindowDrag}
-        onDoubleClick={toggleMaximizeFromDragRegion}
+        className="mari-titlebar-content flex h-full min-w-0 flex-1 items-center"
       >
-        <div data-tauri-drag-region className="mari-title-brand min-w-0">
-          <span data-tauri-drag-region className="mari-title-word mari-title-word-marinara">
-            Marinara
-          </span>
-          <img data-tauri-drag-region className="mari-title-icon" src="/favicon.png" alt="" draggable={false} />
-          <span data-tauri-drag-region className="mari-title-word mari-title-word-engine">
-            Engine
-          </span>
+        <div
+          className="mari-title-drag-region flex h-full min-w-0 flex-1 items-center justify-start px-3"
+          onMouseDown={startWindowDrag}
+          onDoubleClick={toggleMaximizeFromDragRegion}
+        >
+          <div data-tauri-drag-region className="mari-title-brand min-w-0">
+            <span className="mari-title-word mari-title-word-marinara">
+              Marinara
+            </span>
+            <img data-tauri-drag-region className="mari-title-icon" src="/favicon.png" alt="" draggable={false} />
+            <span className="mari-title-word mari-title-word-engine">
+              Engine
+            </span>
+          </div>
+        </div>
+        <div
+          className="mari-window-actions flex h-full shrink-0 items-center gap-2"
+          onMouseDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+        >
+          <PanelNavButtons />
+          <span className="mari-window-actions-divider" aria-hidden />
         </div>
       </div>
       {platform !== "darwin" && controls}

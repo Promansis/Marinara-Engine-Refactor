@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Layout: Main App Shell (Discord-like three-column)
 // ──────────────────────────────────────────────
-import { ChatSidebar } from "./ChatSidebar";
+import { ChatSidebar, type ChatSidebarTab } from "./ChatSidebar";
 import { TopBar } from "./TopBar";
 import { WindowTitleBar } from "./WindowTitleBar";
 import { SpotifyMobileWidget } from "../../features/spotify/components/SpotifyMiniPlayer";
@@ -139,6 +139,7 @@ export function AppShell() {
   const [sidebarDragWidth, setSidebarDragWidth] = useState<number | null>(null);
   const [rightPanelDragWidth, setRightPanelDragWidth] = useState<number | null>(null);
   const [trackerPanelDragWidth, setTrackerPanelDragWidth] = useState<number | null>(null);
+  const [activeChatSidebarTab, setActiveChatSidebarTab] = useState<ChatSidebarTab>("conversation");
   const sidebarDragWidthRef = useRef<number | null>(null);
   const rightPanelDragWidthRef = useRef<number | null>(null);
   const trackerPanelDragWidthRef = useRef<number | null>(null);
@@ -793,7 +794,7 @@ export function AppShell() {
         style={{ width: sidebarOpen ? (isMobile ? "100vw" : liveSidebarWidth) : 0 }}
       >
         <div className="h-full" style={{ width: isMobile ? "100vw" : liveSidebarWidth }}>
-          <ChatSidebar />
+          <ChatSidebar activeTab={activeChatSidebarTab} onActiveTabChange={setActiveChatSidebarTab} />
         </div>
       </aside>
       {!isMobile && sidebarOpen && (

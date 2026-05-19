@@ -571,8 +571,8 @@ body {
 
 .mari-window-titlebar {
   border-bottom: 0;
-  min-height: 1.875rem;
-  padding: 0;
+  min-height: 2.375rem;
+  padding: 0.125rem 0;
 }
 
 .mari-app-chrome .mari-topbar {
@@ -591,16 +591,74 @@ body {
 
 .mari-window-controls,
 .mari-window-control,
+.mari-window-actions,
+.mari-window-actions button,
 .mari-topbar button,
 .mari-topbar a {
   -webkit-app-region: no-drag;
 }
 
+.mari-window-actions {
+  padding-left: 0.35rem;
+}
+
+.mari-titlebar-content {
+  transition: margin-left 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mari-chat-title-controls,
+.mari-window-actions,
+.mari-panel-nav {
+  align-items: center;
+}
+
+.mari-chat-title-controls button,
+.mari-panel-nav button {
+  display: inline-flex;
+  width: 1.875rem;
+  height: 1.875rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.mari-chat-title-controls svg,
+.mari-panel-nav svg {
+  display: block;
+}
+
+.mari-chat-title-divider {
+  display: block;
+  width: 1px;
+  height: 1rem;
+  margin-left: 0.35rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.mari-window-actions-divider {
+  display: block;
+  width: 1px;
+  height: 1rem;
+  margin-left: 0.25rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.mari-panel-nav-divider {
+  display: block;
+  width: 1px;
+  height: 0.875rem;
+  margin-inline: 0.25rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--border) 48%, transparent);
+}
+
 .mari-window-control {
   --mari-control-fg: var(--foreground);
   display: inline-flex;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.875rem;
+  height: 1.875rem;
   align-items: center;
   justify-content: center;
   border: 0;
