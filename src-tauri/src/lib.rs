@@ -182,6 +182,7 @@ pub fn run() {
             storage_commands::media_commands::lorebook_image_upload,
             storage_commands::media_commands::llm_complete,
             storage_commands::media_commands::llm_stream_channel,
+            storage_commands::media_commands::llm_stream_cancel,
             storage_commands::media_commands::llm_list_models,
             storage_commands::mari_commands::professor_mari_prompt,
         ])
