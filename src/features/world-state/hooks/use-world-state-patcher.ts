@@ -211,6 +211,18 @@ function buildPayload(queued: QueuedGameStatePatch) {
   return payload;
 }
 
+function reconcileVisibleGameState(chatId: string, payload: GameStatePatch & GameStatePatchTarget) {
+  const store = useGameStateStore.getState();
+  const current = store.current;
+  if (current?.chatId !== chatId) return;
+
+  store.setGameState({
+    ...current,
+    ...payload,
+    chatId,
+  } as GameState);
+}
+
 function queuePatch(chatId: string, field: GameStatePatchField, value: unknown) {
   const target = getPatchTarget(getCurrentGameStateForChat(chatId));
   const key = getPatchKey(chatId, target);
@@ -306,6 +318,7 @@ export async function flushGameStatePatch(chatId?: string) {
         durablePatches.delete(key);
         persistPendingPatches();
       }
+      reconcileVisibleGameState(queuedSnapshot.chatId, payload);
     } catch (error) {
       if (!inFlightEntry.canceled) errors.push(error);
     }
