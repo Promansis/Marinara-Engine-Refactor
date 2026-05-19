@@ -671,6 +671,8 @@ export function ChatRoleplaySurface({
   const linkedChatName = chat?.connectedChatId
     ? getConnectedChatDisplayName(allChats?.find((c) => c.id === chat.connectedChatId))
     : undefined;
+  const isConcludedScene = chatMeta.sceneStatus === "concluded";
+  const concludedSceneLabel = "This scene has concluded. Convert or reopen it before sending new messages.";
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
   const hideEchoChamberOnMobile =
@@ -1028,7 +1030,7 @@ export function ChatRoleplaySurface({
                   );
                 })}
 
-                {!isStreaming && <CyoaChoices messages={messages} />}
+                {!isStreaming && <CyoaChoices messages={messages} readOnly={isConcludedScene} />}
 
                 {isStreaming && !regenerateMessageId && (
                   <StreamingIndicator
@@ -1072,6 +1074,8 @@ export function ChatRoleplaySurface({
                 <ChatInput
                   key={activeChatId}
                   mode={isRoleplay ? "roleplay" : "conversation"}
+                  readOnly={isConcludedScene}
+                  readOnlyLabel={concludedSceneLabel}
                   characterNames={characterNames}
                   groupResponseOrder={
                     chatCharIds.length > 1 && groupChatMode === "individual"
