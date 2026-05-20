@@ -30,11 +30,7 @@ pub(crate) fn update_character_avatar(
     Ok(updated)
 }
 
-pub(crate) fn remove_avatar_file(
-    state: &AppState,
-    collection: &str,
-    record: &Value,
-) {
+pub(crate) fn remove_avatar_file(state: &AppState, collection: &str, record: &Value) {
     remove_managed_record_file(
         state,
         &format!("avatars/{}", safe_filename(collection)),

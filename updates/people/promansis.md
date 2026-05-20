@@ -2,19 +2,22 @@
 
 ## Current Work
 
-- Boolean configuration normalization
-  - Status: Fixed locally on `fix/boolish-config-normalization`
-  - Impact area: Connections quick switchers, random connection resolution, prompt preset default display/default lookup
-  - Next step: Manual smoke in the desktop app: toggle random-pool membership from Connections and quick switchers, then verify preset default badges after setting a default.
+- Message translation failures leave no visible error
+  - Status: Fixed locally on `fix/bug-19-translation-errors`
+  - Impact area: UI, shared/api, Rust capability error surface
+  - Next step: Manual smoke in the desktop app with an invalid translation provider/API setup to confirm the toast copy and loading reset.
   - Blockers: None.
 
-- Bug 15: Mobile shell panels leave hidden content in the tab order.
-  - Status: In progress
-  - Last updated: 2026-05-19
-  - Branch: `fix/bug-15-mobile-panel-focus`
-  - Worktree: `../Marinara-Engine-Refactor-bug15`
-  - Next step: verify typecheck and mobile keyboard focus behavior.
+## Owned Bugs
 
+## Message translation failures leave no visible error
+
+- Status: Fixed locally on `fix/bug-19-translation-errors`
+- Owner: Promansis
+- Impact area: UI | shared/api | Rust capability
+- Reported: Local backlog item 19
+- Last updated: 2026-05-19
+- Notes: `useTranslate.translate` now owns visible error reporting for rejected translation calls; message action callers explicitly consume the async request while keeping hide/show behavior unchanged. `pnpm typecheck` passes.
 - Bug 16: First-launch tutorial does not trap keyboard focus.
   - Status: In progress
   - Last updated: 2026-05-19
@@ -22,217 +25,23 @@
   - Worktree: `../Marinara-Engine-Refactor-bug16`
   - Next step: verify typecheck and tutorial keyboard focus behavior.
 
-- Bug 19: Message translation failures leave no visible error.
-  - Status: Fixed locally on `fix/bug-19-translation-errors`
-  - Impact area: UI, shared/api, Rust capability error surface
-  - Next step: Manual smoke in the desktop app with an invalid translation provider/API setup to confirm the toast copy and loading reset.
-  - Blockers: None.
-
-- Stored generation replay metadata is not applied on replay/regenerate.
-  - Status: In progress
-  - Owner: Promansis
-  - Impact area: Generation | prompts | agents | provider boundary
-  - Likely root cause: Regenerate requests never reapply stored `message.extra.generationReplay` before `startGeneration` assembles prompt and request state.
-  - Files likely to change: `src/features/generation/hooks/use-generate.ts`, possibly `src/engine/generation/generation-replay.ts` if request shaping needs a helper adjustment.
-  - Checks planned: `pnpm typecheck`
-
-- Spotify setup tells users to set a redirect URI env var that native auth ignores.
-  - Status: Ready for review on `fix/spotify-redirect-uri-setup`
-  - Impact area: Spotify agent setup UI, native Spotify OAuth capability contract
-  - Next step: Review the focused local commit and manually confirm the Spotify setup copy in the agent editor.
-
 ## Owned Bugs
 
-## Connection random-pool toggle can invert stored boolean state
+## First-launch tutorial does not trap keyboard focus
+- Bug 15: Mobile shell panels leave hidden content in the tab order.
+  - Status: In progress
+  - Last updated: 2026-05-19
+  - Branch: `fix/bug-15-mobile-panel-focus`
+  - Worktree: `../Marinara-Engine-Refactor-bug15`
+  - Next step: verify typecheck and mobile keyboard focus behavior.
 
-- Status: Fixed locally on `fix/boolish-config-normalization`
-- Owner: Promansis
-- Impact area: Connections UI, quick switchers, random connection resolvers
-- Reported: Local backlog item 17
-- Last updated: 2026-05-19
-- Notes: Boolish reads now accept boolean `true` and legacy string truth values in connection UI and dependent random/default connection resolvers; writes remain boolean.
+## Owned Bugs
 
 ## Mobile shell panels leave hidden content in the tab order
 
 - Status: In progress
 - Owner: Promansis
 - Impact area: UI
-- Reported: 2026-05-19
-- Last updated: 2026-05-19
-- Branch: `fix/bug-15-mobile-panel-focus`
-- Worktree: `../Marinara-Engine-Refactor-bug15`
-- Next step: verify typecheck and mobile keyboard focus behavior.
-
-## First-launch tutorial does not trap keyboard focus
-
-- Status: In progress
-- Owner: Promansis
-- Impact area: UI
-- Reported: 2026-05-19
-- Last updated: 2026-05-19
-- Branch: `fix/bug-16-onboarding-focus-trap`
-- Worktree: `../Marinara-Engine-Refactor-bug16`
-- Next step: verify typecheck and tutorial keyboard focus behavior.
-
-## Message translation failures leave no visible error
-
-- Status: Fixed locally on `fix/bug-19-translation-errors`
-- Owner: Promansis
-- Impact area: UI | shared/api | Rust capability error surface
-- Reported: Local backlog item 19
-- Last updated: 2026-05-19
-- Notes: `useTranslate.translate` now owns visible error reporting for rejected translation calls; message action callers explicitly consume the async request while keeping hide/show behavior unchanged. `pnpm typecheck` passes.
-
-## Love Toys Control agent results never reach the haptic integration
-
-- Status: Resolved
-- Owner: Promansis
-- Impact area: UI | engine | shared/api | Rust capability
-- Reported: 2026-05-19
-- Last updated: 2026-05-19
-- Notes: Agent-emitted haptic commands now bridge through `integrationGateway.haptic.command`; generation keeps the haptic bridge ordered with a small send interval to avoid overwhelming the native device path.
-
-## Profile import leaves stale asset files behind
-
-- Status: In review
-- Owner: Promansis
-- Impact area: UI | Rust capability
-- Reported: 2026-05-19
-- Last updated: 2026-05-19
-- Branch: `fix/profile-import-clears-stale-assets`
-- Next step: Verify the new profile asset clearing path on a full import/restore flow.
-
-## Suggested Fix Order
-
-1. **Filesystem safety and data loss risks**: symlink escapes, profile import stale assets, tracker edits lost on reload.
-2. **Storage contract and transcript correctness**: character `data` shape. Chat pagination and regenerate swipe contract are fixed in the current codebase.
-3. **Mode/session continuity**: game session carryover, concluded roleplay scene send guard, checkpoint visibility.
-4. **Native integration correctness**: haptic agent execution, haptic action contract, stop-generation cancellation, translation errors.
-5. **UI polish and accessibility**: onboarding focus trap, mobile drawer tab order, default/random-pool badge state.
-
-## Completion Order
-
-1. Game asset operations can follow symlinks outside the managed asset root.
-2. Profile import leaves stale asset files behind.
-3. Reloading immediately after tracker edits can lose pending world state.
-4. Saving a character can persist card data in the wrong shape.
-5. Stop generation does not cancel the provider stream command.
-6. Starting a new game session drops carried inventory and player state.
-7. Stored generation replay metadata is not applied on replay/regenerate.
-8. Love Toys Control agent results never reach the haptic integration.
-9. Haptic inflate actions are advertised but execute as vibrate or fail.
-10. Concluded roleplay scenes remain editable when reopened.
-11. Game checkpoint manager is not reachable from the game surface.
-12. Marinara ZIP imports ignore file timestamps on restore.
-13. Replacing avatars and lorebook images leaves old managed files behind.
-14. New-chat setup flags can open the wizard on the wrong chat after a quick switch.
-15. Mobile shell panels leave hidden content in the tab order.
-16. First-launch tutorial does not trap keyboard focus.
-17. Connection random-pool toggle can invert stored boolean state.
-18. Prompt preset default badge does not recognize boolean defaults.
-19. Message translation failures leave no visible error.
-20. Spotify setup tells users to set a redirect URI env var that native auth ignores.
-
-## App Shell And Accessibility
-
-### First-launch tutorial does not trap keyboard focus
-
-- Status: Resolved
-- Impact area: UI
-- Risk: Medium, accessibility regression on first launch.
-- Likely owner: `src/app/shell/AppShell.tsx`, `src/features/onboarding/components/OnboardingTutorial.tsx`
-- Summary: The onboarding tutorial appears as an overlay, but pressing `Tab` can move focus to shell/window controls behind it. The tutorial needs modal-style focus containment until skipped or completed.
-
-### Mobile shell panels leave hidden content in the tab order
-
-- Status: Resolved
-- Impact area: UI
-- Risk: Medium, mobile accessibility and keyboard navigation.
-- Likely owner: `src/app/shell/AppShell.tsx`
-- Summary: At mobile width, closed sidebars and underlying page controls remain tabbable while another drawer is open. The active drawer needs focus containment, closed panels need inert handling, and `Escape` should dismiss the open mobile panel.
-
-## Library Objects And Configuration
-
-### Saving a character can persist card data in the wrong shape
-
-- Status: Resolved
-- Impact area: UI | shared/api | Rust capability | engine
-- Risk: Medium-high, persisted character records can become unreadable by strict consumers.
-- Likely owner: `src/features/characters/hooks/use-characters.ts` or the storage update boundary for character records.
-- Summary: `CharacterEditor` sends `data` as an object, while several consumers still expect persisted `characters[].data` to be a JSON string. The fix should normalize at the lowest correct owner and review roleplay scene memory updates that also write character data.
-
-### Prompt preset default badge does not recognize boolean defaults
-
-- Status: Resolved
-- Impact area: UI
-- Risk: Low-medium, configuration appears wrong after save/reload.
-- Likely owner: `src/features/presets/components/PresetsPanel.tsx`
-- Summary: Preset updates write `isDefault: true`, but the list only treats `isDefault === "true"` as default. Rendering should accept both legacy string values and current boolean values through a shared boolish reader.
-
-### Connection random-pool toggle can invert stored boolean state
-
-- Status: Resolved
-- Impact area: UI | engine
-- Risk: Medium, UI and random connection resolution can disagree.
-- Likely owner: `src/features/connections`, `src/features/chats/components/QuickConnectionSwitcher.tsx`, `src/features/chats/components/QuickSwitcherMobile.tsx`, random connection resolvers.
-- Summary: Some UI paths only treat `useForRandom === "true"` as in-pool, while schema/update paths use booleans and engine resolvers require boolean `true`. Read boundaries should normalize the flag and new writes should avoid mixed string/boolean semantics.
-
-## Chat Transcript And Regeneration
-
-### Chat history Load More repeats the first page instead of older messages
-
-- Status: Fixed in codebase, kept for audit
-- Impact area: UI | shared/api | Rust capability
-- Risk: Medium-high, transcript pagination and `/goto` cannot reach older messages.
-- Likely owner: Rust `storage_list` pagination for `messages`, or a dedicated chat-message list command with a real cursor contract.
-- Summary: `useChatMessages` sends a `before` cursor, but Rust `storage_list` ignores it and returns the same limited page repeatedly. The fix needs a real cursor contract for message lists without disturbing unpaginated prompt/export paths. Current Rust `storage_list` applies message pagination with a parsed `before` cursor before limiting results.
-
-### Regenerate creates hidden swipes that cannot be selected or read as active content
-
-- Status: Fixed in codebase, kept for audit
-- Impact area: UI | shared/api | Rust capability | engine
-- Risk: High, stored regeneration output can be invisible and excluded from active transcript context.
-- Likely owner: Chat message storage contract for swipes, with UI renderers and prompt assembly reviewed as dependent callers.
-- Summary: `chat_message_add_swipe` appends to `swipes` and updates `activeSwipeIndex`, but does not update `content` or `swipeCount`. Renderers gate controls on `swipeCount` and display `content`, so regenerated swipes are usually hidden. The product contract needs to decide whether active swipe content is denormalized onto the row or derived by readers. Current swipe writes update `activeSwipeIndex`, `swipeCount`, and denormalized active `content`; message reads also materialize swipe fields.
-
-### Regenerate streaming state is never attached to the target message
-
-- Status: Fixed in codebase, kept for audit
-- Impact area: UI | engine
-- Risk: Medium, regenerate UX shows the old message while new tokens stream elsewhere.
-- Likely owner: `src/features/modes/components/ModeSurface.tsx` or `src/features/generation/hooks/use-generate.ts`
-- Summary: Regenerate passes `regenerateMessageId` to the generation request but never stores it in `useChatStore`. The renderer therefore cannot attach streaming output to the target message and falls back to generic typing state. The target should be set before generation and cleared in `finally`. Current generation UI stores `regenerateMessageId` before streaming and clears it in `finally`.
-
-## Roleplay Lifecycle
-
-### Concluded roleplay scenes remain editable when reopened
-
-- Status: Resolved
-- Impact area: UI | engine
-- Risk: Medium, concluded scene archives can diverge from their final summaries and memory writes.
-- Likely owner: `src/features/roleplay/components/ChatRoleplaySurface.tsx` plus an authoritative generation/send guard.
-- Summary: Concluding a scene marks `sceneStatus: "concluded"`, but reopened scene chats still render normal input and the generation path accepts sends. Concluded scenes should be read-only unless explicitly converted or reopened.
-
-## Game Mode
-
-### Starting a new game session drops carried inventory and player state
-
-- Status: Resolved
-- Impact area: UI | engine | storage
-- Risk: High, continuity-critical campaign state can disappear between sessions.
-- Likely owner: `src/features/game/api/game-api.ts`, with dependent readers in `src/features/game/components/GameSurface.tsx`
-- Summary: `gameApi.startSession` carries over only selected metadata and omits inventory, widget state, time, weather, morale, notes, and `chat.gameState`. The next session therefore hydrates with missing inventory/player stats. The fix should define the authoritative carryover fields and avoid copying stale combat-only state.
-
-### Game checkpoint manager is not reachable from the game surface
-
-- Status: Resolved
-- Impact area: UI | engine
-- Risk: Medium, implemented checkpoint/repair capability has no visible entry point.
-- Likely owner: `src/features/game/components/GameSurface.tsx` or the game toolbar/panel that owns utility overlays.
-- Summary: `GameCheckpoints` and checkpoint hooks/API exist, but no visible game surface imports or renders the manager. Exposing it should also verify load restores chat detail, messages, metadata-backed game store, and `useGameStateStore`.
-
-## Generation, Prompts, Agents, And Provider Boundary
-
 ### Stored generation replay metadata is not applied on replay/regenerate
 
 - Status: In progress
@@ -242,105 +51,163 @@
 - Files likely to change: `src/features/generation/hooks/use-generate.ts`, possibly `src/engine/generation/generation-replay.ts` if request shaping needs a helper adjustment.
 - Checks planned: `pnpm typecheck`
 
-### Stop generation does not cancel the provider stream command
+## Owned Bugs
 
-- Status: Resolved
-- Impact area: Generation | prompts | agents | provider boundary
-- Risk: Medium-high, provider work and billing can continue after the UI says generation stopped.
-- Likely owner: `src/shared/api/llm-api.ts`, `src-tauri/src/commands/storage/llm.rs`, and the `marinara_llm` streaming capability.
-- Summary: The frontend abort signal makes `llmApi.stream` throw locally, but `llm_stream_channel` has no request id or cancellation token. Rust provider streaming continues until completion or channel send failure. The stream command needs native cancellation semantics.
+## Starting a new game session drops carried inventory and player state
 
-## Storage, Repositories, Imports, And Exports
+- Status: Done
+- Owner: Promansis
+- Impact area: UI | engine | storage
+- Fixing game checkpoint access through the local-only bug branch workflow.
 
-### Marinara ZIP imports ignore file timestamps on restore
+## Owned Bugs
 
-- Status: Resolved
-- Impact area: UI | shared/api | Rust capability
-- Risk: Medium, imported library ordering and timestamps are wrong.
-- Likely owner: `src/shared/api/import-api.ts`, character/persona import callers, and settings import callers.
-- Summary: Character and persona import modals build `FormData` containing `timestampOverrides`, but call `importApi.marinaraFile(file)` with only the bare file. Rust never receives overrides and falls back to archive or current timestamps.
+## Game checkpoint manager is not reachable from the game surface
 
-### Profile import leaves stale asset files behind
+- Status: Done
+- Owner: Promansis
+- Impact area: UI | engine
+- Reported: 2026-05-19
+- Last updated: 2026-05-19
+
+### Notes
+
+- Failing behavior: `gameApi.startSession` creates the next session with only setup/map/NPC metadata, dropping durable inventory, widget state, time/weather, morale, notes, journal, and the stored `chat.gameState`.
+- Owner: `src/features/game/api/game-api.ts`; dependent readers are `GameSurface`, `useSyncGameState`, world-state hydration, and game prompt assembly.
+- Resolution: new sessions now carry durable game metadata and `chat.gameState` while leaving combat-only session state behind.
+
+## Status Notes
+
+- Bug 6 branch: `fix/game-session-carryover-state`.
+- Failing behavior: `GameCheckpoints` and checkpoint hooks/API exist, but `GameSurface` has no visible entry point or restore refresh path.
+- Owner: `src/features/game/components/GameSurface.tsx`; dependent restore path is `gameApi.loadCheckpoint`, chat detail/messages queries, and `useGameStateStore`.
+- Resolution: the game surface now exposes the checkpoint manager on desktop and mobile, and refreshes chat/game state after a checkpoint restore.
+- Stop generation does not cancel the provider stream command.
+  - Status: In review
+  - Next step: Ready for review on the focused bug-fix branch after TypeScript, Rust, and docs checks.
+  - Blockers: None.
+
+## Owned Bugs
+
+## Love Toys Control agent results never reach the haptic integration
+
+- Status: Done
+- Owner: Promansis
+- Impact area: UI | engine | shared/api | Rust capability
+- Reported: 2026-05-19
+- Last updated: 2026-05-19
+
+### Steps
+
+1. Launch the app with onboarding incomplete.
+2. When the tutorial overlay appears, press `Tab` and `Shift+Tab`.
+3. Continue or skip the tutorial.
+
+### Expected
+
+Keyboard focus stays inside the tutorial until it is skipped or completed, then focus returns to the previously focused shell control when possible.
+
+### Actual
+
+The tutorial appears as an overlay, but `Tab` can move focus to shell or window controls behind it.
+
+### Notes
+
+- Owner: `src/features/onboarding/components/OnboardingTutorial.tsx`.
+- Branch: `fix/bug-16-onboarding-focus-trap`.
+- Local-only worktree: `../Marinara-Engine-Refactor-bug16`.
+
+## Status Notes
+
+- Bug 16 keeps the fix in onboarding UI; no engine, shared API, storage, or Rust capability behavior is expected to change.
+1. Open the app at mobile width.
+2. Open the left chat sidebar, tracker drawer, or right settings/tools drawer.
+3. Press `Tab` or `Shift+Tab`, then press `Escape`.
+
+### Expected
+
+Keyboard focus stays inside the active mobile panel, closed panels and underlying page controls are not reachable, and `Escape` dismisses the active panel.
+
+### Actual
+
+Closed sidebars and underlying page controls can remain tabbable while another drawer is open.
+
+### Notes
+
+- Owner: `src/app/shell/AppShell.tsx`.
+- Branch: `fix/bug-15-mobile-panel-focus`.
+- Local-only worktree: `../Marinara-Engine-Refactor-bug15`.
+
+## Status Notes
+
+- Bug 15 keeps the fix in the shell UI layer; no engine, shared API, storage, or Rust capability behavior is expected to change.
+1. Enable or trigger the Love Toys Control agent during generation.
+2. Observe a successful agent result with haptic commands.
+3. Check whether the connected haptic device receives the command.
+
+### Expected
+
+Agent-emitted haptic commands should be sent through the native haptic integration.
+
+### Actual
+
+The agent result is recorded, but nothing reaches `integrationGateway.haptic.command`.
+
+### Notes
+
+- Likely owner: `src/features/generation/hooks/use-generate.ts`.
+- Keep the fix at the agent-result bridge, not the agent executor.
+- Fixed by dispatching successful `haptic_command` agent results to `integrationGateway.haptic.command`.
+- Follow-up fixed multi-command patterns by serializing agent haptic commands above the native 200ms rate limit.
+- Verification: `pnpm typecheck`; `cargo check --manifest-path src-tauri/Cargo.toml`.
+
+## Profile import leaves stale asset files behind
 
 - Status: In review
 - Owner: Promansis
 - Impact area: UI | Rust capability
 - Reported: 2026-05-19
 - Last updated: 2026-05-19
-- Branch: `fix/profile-import-clears-stale-assets`
-- Next step: Verify the new profile asset clearing path on a full import/restore flow.
 
-### Reloading immediately after tracker edits can lose pending world state
+### Steps
 
-- Status: Resolved
-- Impact area: UI | shared/api | storage
-- Risk: Medium-high, accepted tracker edits can be lost on quick reload/close.
-- Likely owner: `src/features/world-state/hooks/use-world-state-patcher.ts`, with support from `src/features/world-state/api/world-state-api.ts` or lower storage capability.
-- Summary: Tracker writes are debounced. On `beforeunload`, pending patches are removed from memory before an unawaited async Tauri storage patch completes, and the `keepalive` option has no effect on `invokeTauri`. The queue should not be discarded until durable write success is guaranteed.
+1. Configure a connected haptic device that supports inflation.
+2. Send a haptic command with `action: "inflate"`.
+3. Observe the native command result.
 
-## Managed Assets And Filesystem Safety
+### Expected
 
-### Game asset operations can follow symlinks outside the managed asset root
+Inflate-capable devices should receive an inflate-compatible native command.
 
-- Status: Resolved
-- Impact area: shared/api | Rust capability
-- Risk: High, managed asset commands can escape the intended root through symlinks.
-- Likely owner: `src-tauri/crates/assets/src/lib.rs`, `src-tauri/crates/security/src/lib.rs`
-- Summary: `AssetService::absolute_path` rejects absolute paths and `..`, then joins with the asset root, but it does not canonicalize and re-check symlink-resolved paths. Reads, writes, moves, deletes, copies, file info, and returned absolute paths can target files outside `game-assets` if a symlink is present.
+### Actual
 
-### Replacing avatars and lorebook images leaves old managed files behind
+`inflate` is advertised in prompts and types, but the Rust command path normalizes it to a vibrate fallback or rejects it.
 
-- Status: Resolved
-- Impact area: UI | Rust capability
-- Risk: Medium, repeated replacements orphan managed media files.
-- Likely owner: `src-tauri/src/commands/storage/media_uploads.rs`, `avatars.rs`, `lorebook_images.rs`, and relevant record delete paths.
-- Summary: Avatar and lorebook image replacements always write a new unique file and patch the record, but never remove the previous managed file. Generic record deletion also does not clean up owned media. Cleanup should only delete files inside managed media folders, not external/user-provided URLs.
+### Notes
 
-## Native Integrations
+- Likely owner: `src-tauri/src/commands/storage/integrations/haptic.rs`.
+- The native layer should explicitly recognize `inflate` instead of hiding it behind a generic fallback.
+- Current Buttplug dependency does not expose an `inflate` output command, so the fix removes `inflate` from the advertised TypeScript and prompt contract instead of faking support.
+- Verification: `pnpm typecheck`; `cargo check --manifest-path src-tauri/Cargo.toml`.
+### Stop generation does not cancel the provider stream command
 
-### Love Toys Control agent results never reach the haptic integration
-
-- Status: Resolved
+- Status: In review
 - Owner: Promansis
-- Impact area: UI | engine | shared/api | Rust capability
+- Impact area: Generation | prompts | agents | provider boundary
 - Reported: 2026-05-19
 - Last updated: 2026-05-19
-- Notes: Agent-emitted haptic commands now bridge through `integrationGateway.haptic.command`; generation keeps the haptic bridge ordered with a small send interval to avoid overwhelming the native device path.
 
-### Haptic inflate actions are advertised but execute as vibrate or fail
+#### Notes
 
-- Status: Resolved
-- Impact area: engine | shared/api | Rust capability
-- Risk: Medium, prompt/schema/parser/native contracts disagree.
-- Likely owner: `src/engine/contracts/constants/agent-prompts.ts`, `src/engine/contracts/types/haptic.ts`, `src/engine/modes/chat/commands/character-commands.ts`, `src-tauri/src/commands/storage/integrations/haptic.rs`
-- Summary: The prompt and TypeScript type advertise `inflate`, but the connected-command parser does not allow it and Rust normalization rejects it. The product contract should either implement inflation through the correct native output type or remove it from advertised actions.
+The local-only bug backlog lists this as bug 5. The frontend abort signal stopped the local async stream iterator, but `llm_stream_channel` had no request id or cancellation token, so Rust provider streaming could continue until completion or channel send failure.
 
-### Spotify setup tells users to set a redirect URI env var that native auth ignores
+The fix should add an explicit stream cancellation contract between `src/shared/api/llm-api.ts` and the Rust LLM command boundary without moving provider transport behavior out of `marinara_llm`.
 
-- Status: Ready for review on `fix/spotify-redirect-uri-setup`
-- Impact area: Spotify agent setup UI, native Spotify OAuth capability contract
-- Next step: Review the focused local commit and manually confirm the Spotify setup copy in the agent editor.
+`llmApi.stream` now assigns each stream a native cancellation id and calls `llm_stream_cancel` when the abort signal fires. The Rust command registers active stream ids in app state and uses `tokio::select!` to drop the provider stream future when cancellation is requested.
+The local-only bug backlog lists this as bug 4. Character create and version restore already serialize card `data`, but generic `storage_update` patches could persist object-shaped `data` from the character editor, agent card updates, roleplay scene memories, chat schedules, and connected character commands.
 
-### Message translation failures leave no visible error
+Generic character update patches now normalize card `data` at the Rust storage command boundary before writing to storage, so all `storage_update` callers keep the persisted JSON-string contract.
 
-- Status: Resolved
-- Impact area: UI | shared/api | Rust capability
-- Risk: Low-medium, provider/auth/network failures can become silent unhandled promise rejections.
-- Likely owner: `src/shared/hooks/use-translate.ts` and message action call sites in `src/features/chats/components`
-- Summary: `useTranslate.translate` resets state in `finally` but does not catch rejected native calls or show a toast. Message action buttons call it without awaiting or catching. Message translation should surface errors consistently with draft translation while preserving successful hide/show behavior.
-
-## Cross-Domain Async State
-
-### New-chat setup flags can open the wizard on the wrong chat after a quick switch
-
-- Status: Resolved
-- Impact area: UI | shared state
-- Risk: Medium, setup UI can attach to the wrong active chat after async creation work.
-- Likely owner: `src/shared/stores/chat.store.ts`, `src/features/characters/hooks/use-start-chat-from-character.ts`, `src/features/chats/components/NewChatConnectionGate.tsx`, `src/features/modes/components/ModeSurface.tsx`
-- Summary: New-chat flows store setup intent in global booleans, then `ModeSurface` consumes them against the current `activeChatId`. If the user switches chats while preset/greeting work is still running, the wizard/settings drawer can open on an unrelated chat. The intent should carry a target chat id and mode.
 ## Status Notes
 
-- Bug 15 keeps the fix in the shell UI layer; no engine, shared API, storage, or Rust capability behavior is expected to change.
-- Bug 16 keeps the fix in onboarding UI; no engine, shared API, storage, or Rust capability behavior is expected to change.
-- Bug 19 keeps the fix in message translation UI/error surfacing; no engine, storage, or broader capability behavior is expected to change.
-- Haptic agent work is resolved in the generation hook and prompt/type contract; the bridge is intentionally small and ordered to respect device pacing.
+- Bug 11 branch: `fix/game-checkpoint-manager-surface`.

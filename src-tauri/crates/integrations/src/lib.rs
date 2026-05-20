@@ -13,7 +13,9 @@ pub fn call_integration(integration: &str, operation: &str, _payload: Value) -> 
             "playback": null
         })),
         ("spotify", "devices") => Ok(json!({ "devices": [], "activeDeviceId": null })),
-        ("spotify", _) => Ok(json!({ "ok": false, "connected": false, "devices": [], "playback": null })),
+        ("spotify", _) => {
+            Ok(json!({ "ok": false, "connected": false, "devices": [], "playback": null }))
+        }
         _ => Ok(json!({ "ok": false })),
     }
 }

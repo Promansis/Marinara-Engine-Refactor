@@ -85,29 +85,23 @@ impl AppState {
     }
 
     pub fn cancel_llm_stream(&self, stream_id: &str) -> AppResult<bool> {
-        let cancellations = self
-            .llm_stream_cancellations
-            .lock()
-            .map_err(|_| {
-                AppError::new(
-                    "llm_stream_cancel_error",
-                    "LLM stream cancellation registry is unavailable",
-                )
-            })?;
+        let cancellations = self.llm_stream_cancellations.lock().map_err(|_| {
+            AppError::new(
+                "llm_stream_cancel_error",
+                "LLM stream cancellation registry is unavailable",
+            )
+        })?;
         if let Some(tx) = cancellations.active.get(stream_id) {
             let _ = tx.send(true);
             Ok(true)
         } else {
             drop(cancellations);
-            let mut cancellations = self
-                .llm_stream_cancellations
-                .lock()
-                .map_err(|_| {
-                    AppError::new(
-                        "llm_stream_cancel_error",
-                        "LLM stream cancellation registry is unavailable",
-                    )
-                })?;
+            let mut cancellations = self.llm_stream_cancellations.lock().map_err(|_| {
+                AppError::new(
+                    "llm_stream_cancel_error",
+                    "LLM stream cancellation registry is unavailable",
+                )
+            })?;
             cancellations.pending.insert(stream_id.to_string());
             Ok(false)
         }

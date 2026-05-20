@@ -19,11 +19,16 @@ pub fn validate_collection_name(name: &str) -> AppResult<()> {
 pub fn assert_relative_safe_path(path: &str) -> AppResult<PathBuf> {
     let candidate = Path::new(path);
     if candidate.is_absolute() {
-        return Err(AppError::invalid_input("Absolute paths are not allowed here"));
+        return Err(AppError::invalid_input(
+            "Absolute paths are not allowed here",
+        ));
     }
 
     for component in candidate.components() {
-        if matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)) {
+        if matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        ) {
             return Err(AppError::invalid_input("Path escapes are not allowed here"));
         }
     }
@@ -42,7 +47,9 @@ pub fn assert_inside_dir(base: &Path, path: &Path) -> AppResult<PathBuf> {
     if canonical_path.starts_with(&canonical_base) {
         Ok(canonical_path)
     } else {
-        Err(AppError::invalid_input("Path is outside the allowed directory"))
+        Err(AppError::invalid_input(
+            "Path is outside the allowed directory",
+        ))
     }
 }
 
