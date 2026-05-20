@@ -281,7 +281,9 @@ export function PresetsPanel() {
           const isBulkSelected = selectedPresetIds.has(preset.id);
           const sectionCount = getSectionCount(preset);
           const wrapFormat = (preset.wrapFormat ?? "xml") as string;
-          const isDefault = isStoredBooleanTrue(preset.isDefault);
+          const isDefault = isStoredBooleanTrue(
+            preset.isDefault ?? (preset as PresetRow & { default?: unknown }).default,
+          );
 
           return (
             <div
