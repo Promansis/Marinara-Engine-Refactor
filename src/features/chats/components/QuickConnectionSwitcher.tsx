@@ -8,10 +8,7 @@ import { useUpdateChat, useChat } from "../../chats/hooks/use-chats";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { filterLanguageGenerationConnections } from "../../../shared/lib/connection-filters";
 import { cn } from "../../../shared/lib/utils";
-
-function isRandomPoolEnabled(value: unknown): boolean {
-  return value === true || value === "true" || value === "1";
-}
+import { boolish as isRandomPoolEnabled } from "../../../engine/generation/runtime-records";
 
 export function QuickConnectionSwitcher({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);

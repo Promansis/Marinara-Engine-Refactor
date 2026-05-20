@@ -1,6 +1,7 @@
 import type { LlmGateway, LlmMessage } from "../../../capabilities/llm";
 import type { StorageGateway } from "../../../capabilities/storage";
 import { parseJsonArray, parseJsonObject } from "../../../core/json";
+import { boolish } from "../../../generation/runtime-records";
 import type { BaseLLMProvider, ChatMessage } from "../../../generation-core/llm/base-provider.js";
 
 // ── Types ──
@@ -543,14 +544,10 @@ function toLlmMessage(message: ChatMessage): LlmMessage {
   return { role, content: String(message.content ?? ""), name: message.name };
 }
 
-function isStoredBooleanTrue(value: unknown): boolean {
-  return value === true || value === "true" || value === "1";
-}
-
 async function resolveScheduleConnection(storage: StorageGateway, chatConnectionId: string): Promise<JsonRecord> {
   const connections = await storage.list<JsonRecord>("connections");
   if (chatConnectionId === "random") {
-    const pool = connections.filter((connection) => isStoredBooleanTrue(connection.useForRandom));
+    const pool = connections.filter((connection) => boolish(connection.useForRandom, false));
     const selected = pool[Math.floor(Math.random() * pool.length)];
     if (!selected) throw new Error("No connections marked for the random pool");
     return selected;
@@ -561,7 +558,7 @@ async function resolveScheduleConnection(storage: StorageGateway, chatConnection
     return connection;
   }
   const selected =
-    connections.find((connection) => isStoredBooleanTrue(connection.isDefault) || isStoredBooleanTrue(connection.default)) ??
+    connections.find((connection) => boolish(connection.isDefault, false) || boolish(connection.default, false)) ??
     connections[0];
   if (!selected) throw new Error("No connection configured");
   return selected;

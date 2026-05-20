@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../../shared/lib/utils";
 import { TTSConfigCard } from "../../settings/components/settings/TTSConfigCard";
+import { boolish } from "../../../engine/generation/runtime-records";
 
 /** Provider → gradient color pair for connection icons. */
 const PROVIDER_COLORS: Record<string, { from: string; to: string; ring: string; badge: string }> = {
@@ -68,10 +69,6 @@ type ConnectionRowData = {
   folderId?: string | null;
 };
 
-function isStoredBooleanTrue(value: unknown): boolean {
-  return value === true || value === "true" || value === "1";
-}
-
 function ConnectionRow({
   conn,
   isSelected,
@@ -90,7 +87,7 @@ function ConnectionRow({
   const updateConnection = useUpdateConnection();
   const openConnectionDetail = useUIStore((s) => s.openConnectionDetail);
 
-  const inRandomPool = isStoredBooleanTrue(conn.useForRandom);
+  const inRandomPool = boolish(conn.useForRandom, false);
   const colors = PROVIDER_COLORS[conn.provider] ?? DEFAULT_COLOR;
 
   return (

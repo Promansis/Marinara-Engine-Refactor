@@ -11,6 +11,7 @@ import { useUpdateChat, useChat } from "../../chats/hooks/use-chats";
 import { useChatStore } from "../../../shared/stores/chat.store";
 import { filterLanguageGenerationConnections } from "../../../shared/lib/connection-filters";
 import { cn, getAvatarCropStyle, parseAvatarCropJson } from "../../../shared/lib/utils";
+import { boolish as isRandomPoolEnabled } from "../../../engine/generation/runtime-records";
 
 interface Persona {
   id: string;
@@ -33,10 +34,6 @@ interface ParsedGroup {
   name: string;
   memberIds: string[];
   members: Persona[];
-}
-
-function isRandomPoolEnabled(value: unknown): boolean {
-  return value === true || value === "true" || value === "1";
 }
 
 export function QuickSwitcherMobile() {

@@ -1,13 +1,9 @@
 import type { StorageGateway } from "../capabilities/storage";
-import { isRecord, parseRecord, readString, type JsonRecord } from "./runtime-records";
+import { boolish, isRecord, parseRecord, readString, type JsonRecord } from "./runtime-records";
 
 export function requireRecord(value: unknown, label: string): JsonRecord {
   if (isRecord(value)) return value;
   throw new Error(`${label} was not found`);
-}
-
-function isStoredBooleanTrue(value: unknown): boolean {
-  return value === true || value === "true" || value === "1";
 }
 
 export async function resolveGenerationConnection(
@@ -23,7 +19,7 @@ export async function resolveGenerationConnection(
 
   const connections = await storage.list<JsonRecord>("connections");
   const selected =
-    connections.find((connection) => isStoredBooleanTrue(connection.isDefault) || isStoredBooleanTrue(connection.default)) ??
+    connections.find((connection) => boolish(connection.isDefault, false) || boolish(connection.default, false)) ??
     connections[0];
   if (!selected) throw new Error("No LLM connection is configured");
   return selected;

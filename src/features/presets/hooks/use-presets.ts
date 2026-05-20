@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { previewGenerationPrompt } from "../../../engine/generation/prompt-preview";
+import { boolish } from "../../../engine/generation/runtime-records";
 import { storageApi } from "../../../shared/api/storage-api";
 import { invokeTauri } from "../../../shared/api/tauri-client";
 import type { PromptPreset, PromptGroup, PromptSection, ChoiceBlock, GenerationParameters, ChatMLMessage } from "../../../engine/contracts/types/prompt";
@@ -35,10 +36,6 @@ const promptOrderField: Record<PromptNestedKind, string> = {
   sections: "sectionOrder",
   variables: "variableOrder",
 };
-
-function isStoredBooleanTrue(value: unknown): boolean {
-  return value === true || value === "true" || value === "1";
-}
 
 async function listPromptNested<T>(presetId: string, kind: PromptNestedKind): Promise<T[]> {
   return storageApi.list<T>(promptNestedEntity[kind], { filters: { presetId } });
@@ -129,8 +126,8 @@ export function useDefaultPreset() {
       return (
         presets.find(
           (preset) =>
-            isStoredBooleanTrue((preset as PromptPreset & { default?: unknown }).isDefault) ||
-            isStoredBooleanTrue((preset as PromptPreset & { default?: unknown }).default),
+            boolish((preset as PromptPreset & { default?: unknown }).isDefault, false) ||
+            boolish((preset as PromptPreset & { default?: unknown }).default, false),
         ) ?? null
       );
     },

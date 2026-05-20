@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { previewGenerationPrompt } from "../../../engine/generation/prompt-preview";
+import { boolish } from "../../../engine/generation/runtime-records";
 import { backfillConversationSummaries } from "../../../engine/modes/chat/core/summaries/auto-summary.service";
 import { appendChatSummaryEntryToMetadata } from "../../../engine/shared/text/chat-summary-entries";
 import { llmApi } from "../../../shared/api/llm-api";
@@ -735,10 +736,6 @@ function messageHiddenFromAi(message: Message) {
   return extra.hiddenFromAI === true || extra.hiddenFromAi === true;
 }
 
-function isStoredBooleanTrue(value: unknown): boolean {
-  return value === true || value === "true" || value === "1";
-}
-
 function compactTranscript(messages: Message[]) {
   return messages
     .map((message, index) => {
@@ -752,7 +749,7 @@ async function resolveSummaryConnectionId(chat: Chat): Promise<string> {
   if (typeof chat.connectionId === "string" && chat.connectionId.trim()) return chat.connectionId.trim();
   const connections = await storageApi.list<Record<string, unknown>>("connections");
   const selected =
-    connections.find((connection) => isStoredBooleanTrue(connection.isDefault) || isStoredBooleanTrue(connection.default)) ??
+    connections.find((connection) => boolish(connection.isDefault, false) || boolish(connection.default, false)) ??
     connections[0];
   const connectionId = typeof selected?.id === "string" ? selected.id.trim() : "";
   if (!connectionId) throw new Error("No API connection configured for summary generation.");

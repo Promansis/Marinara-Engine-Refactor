@@ -2,6 +2,7 @@ import type { DaySummaryEntry, WeekSummaryEntry } from "../../../../contracts/ty
 import type { LlmGateway, LlmMessage } from "../../../../capabilities/llm";
 import type { StorageGateway } from "../../../../capabilities/storage";
 import type { BaseLLMProvider } from "../../../../generation-core/llm/base-provider.js";
+import { boolish } from "../../../../generation/runtime-records";
 import { stripConversationPromptTimestamps } from "./transcript-sanitize.js";
 
 export interface ConversationSummaryMessage {
@@ -80,10 +81,6 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function isStoredBooleanTrue(value: unknown): boolean {
-  return value === true || value === "true" || value === "1";
-}
-
 function stringArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
   if (typeof value === "string") {
@@ -160,7 +157,7 @@ async function resolveSummaryConnection(
   }
   const connections = await storage.list<JsonRecord>("connections");
   const selected =
-    connections.find((connection) => isStoredBooleanTrue(connection.isDefault) || isStoredBooleanTrue(connection.default)) ??
+    connections.find((connection) => boolish(connection.isDefault, false) || boolish(connection.default, false)) ??
     connections[0];
   if (!selected) throw new Error("No API connection configured for this chat");
   return selected;
