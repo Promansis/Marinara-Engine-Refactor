@@ -224,10 +224,7 @@ pub async fn llm_stream_channel(
 }
 
 #[tauri::command]
-pub fn llm_stream_cancel(
-    state: State<'_, AppState>,
-    stream_id: String,
-) -> Result<Value, AppError> {
+pub fn llm_stream_cancel(state: State<'_, AppState>, stream_id: String) -> Result<Value, AppError> {
     llm::llm_stream_cancel(&state, &stream_id)
 }
 

@@ -6,12 +6,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-const MANAGED_GAME_ASSET_CATEGORIES: &[&str] = &["music", "sfx", "ambient", "sprites", "backgrounds"];
+const MANAGED_GAME_ASSET_CATEGORIES: &[&str] =
+    &["music", "sfx", "ambient", "sprites", "backgrounds"];
 const MAX_TEXT_ASSET_BYTES: usize = 1_000_000;
 const MAX_MEDIA_ASSET_BYTES: usize = 75 * 1024 * 1024;
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "ogg", "wav", "flac", "m4a", "aac", "opus"];
-const TEXT_EXTENSIONS: &[&str] = &["txt", "md", "markdown", "json", "jsonl", "yaml", "yml", "csv", "log"];
+const TEXT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "markdown", "json", "jsonl", "yaml", "yml", "csv", "log",
+];
 
 #[derive(Clone)]
 pub struct AssetService {
@@ -193,7 +196,12 @@ impl AssetService {
         Ok(json!({ "path": self.relative_string(&target) }))
     }
 
-    pub fn write_upload(&self, category: &str, subcategory: Option<&str>, file: &Value) -> AppResult<Value> {
+    pub fn write_upload(
+        &self,
+        category: &str,
+        subcategory: Option<&str>,
+        file: &Value,
+    ) -> AppResult<Value> {
         if !MANAGED_GAME_ASSET_CATEGORIES.contains(&category) {
             return Err(AppError::invalid_input("Invalid game asset category"));
         }
@@ -208,9 +216,9 @@ impl AssetService {
             .get("base64")
             .and_then(Value::as_str)
             .ok_or_else(|| AppError::invalid_input("Uploaded file is missing base64 data"))?;
-        let bytes = general_purpose::STANDARD
-            .decode(base64)
-            .map_err(|error| AppError::invalid_input(format!("Invalid upload encoding: {error}")))?;
+        let bytes = general_purpose::STANDARD.decode(base64).map_err(|error| {
+            AppError::invalid_input(format!("Invalid upload encoding: {error}"))
+        })?;
         if bytes.len() > MAX_MEDIA_ASSET_BYTES {
             return Err(AppError::invalid_input("Uploaded file is too large"));
         }
@@ -305,7 +313,9 @@ impl AssetService {
             let mut children = Vec::new();
             for entry in fs::read_dir(path)? {
                 let child_path = entry?.path();
-                if should_skip_asset_entry(&child_path) || child_path.file_name().and_then(|name| name.to_str()) == Some("meta.json") {
+                if should_skip_asset_entry(&child_path)
+                    || child_path.file_name().and_then(|name| name.to_str()) == Some("meta.json")
+                {
                     continue;
                 }
                 children.push(self.node_for_path(&child_path, root_name)?);
@@ -451,7 +461,9 @@ fn ensure_text_asset_path(path: &Path) -> AppResult<()> {
     if TEXT_EXTENSIONS.contains(&extension.as_str()) {
         Ok(())
     } else {
-        Err(AppError::invalid_input("Only text asset files can be edited as text"))
+        Err(AppError::invalid_input(
+            "Only text asset files can be edited as text",
+        ))
     }
 }
 
@@ -571,7 +583,9 @@ fn unique_target_path(target: &Path) -> AppResult<PathBuf> {
             return Ok(candidate);
         }
     }
-    Err(AppError::invalid_input("Could not find an available filename"))
+    Err(AppError::invalid_input(
+        "Could not find an available filename",
+    ))
 }
 
 fn sort_asset_rows(rows: &mut [Value]) {
@@ -671,7 +685,9 @@ mod tests {
         let service = AssetService::new(&root).expect("create asset service");
 
         assert!(service.read_text("music/escape/secret.txt").is_err());
-        assert!(service.write_text("music/escape/new.txt", "outside").is_err());
+        assert!(service
+            .write_text("music/escape/new.txt", "outside")
+            .is_err());
         assert!(!outside.join("new.txt").exists());
 
         let _ = fs::remove_dir_all(sandbox);

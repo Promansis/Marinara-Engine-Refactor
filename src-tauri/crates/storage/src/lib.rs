@@ -26,11 +26,18 @@ impl FileStorage {
     }
 
     pub fn list(&self, collection: &str) -> AppResult<Vec<Value>> {
-        let _guard = self.lock.lock().map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
         self.read_collection(collection)
     }
 
-    pub fn list_where(&self, collection: &str, filters: &Map<String, Value>) -> AppResult<Vec<Value>> {
+    pub fn list_where(
+        &self,
+        collection: &str,
+        filters: &Map<String, Value>,
+    ) -> AppResult<Vec<Value>> {
         let rows = self.list(collection)?;
         Ok(rows
             .into_iter()
@@ -38,13 +45,18 @@ impl FileStorage {
                 let Some(obj) = row.as_object() else {
                     return false;
                 };
-                filters.iter().all(|(key, expected)| obj.get(key) == Some(expected))
+                filters
+                    .iter()
+                    .all(|(key, expected)| obj.get(key) == Some(expected))
             })
             .collect())
     }
 
     pub fn get(&self, collection: &str, id: &str) -> AppResult<Option<Value>> {
-        let _guard = self.lock.lock().map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
         Ok(self
             .read_collection(collection)?
             .into_iter()
@@ -52,7 +64,10 @@ impl FileStorage {
     }
 
     pub fn create(&self, collection: &str, value: Value) -> AppResult<Value> {
-        let _guard = self.lock.lock().map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
         let mut rows = self.read_collection(collection)?;
         let mut object = ensure_object(value)?;
         let id = object
@@ -77,7 +92,10 @@ impl FileStorage {
     }
 
     pub fn upsert_with_id(&self, collection: &str, id: &str, value: Value) -> AppResult<Value> {
-        let _guard = self.lock.lock().map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
         let mut rows = self.read_collection(collection)?;
         let mut object = ensure_object(value)?;
         let now = now_iso();
@@ -96,7 +114,10 @@ impl FileStorage {
     }
 
     pub fn patch(&self, collection: &str, id: &str, patch: Value) -> AppResult<Value> {
-        let _guard = self.lock.lock().map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
         let mut rows = self.read_collection(collection)?;
         let patch = ensure_object(patch)?;
         let mut found = None;
@@ -115,14 +136,19 @@ impl FileStorage {
             break;
         }
         let Some(record) = found else {
-            return Err(AppError::not_found(format!("{collection}/{id} was not found")));
+            return Err(AppError::not_found(format!(
+                "{collection}/{id} was not found"
+            )));
         };
         self.write_collection(collection, &rows)?;
         Ok(record)
     }
 
     pub fn delete(&self, collection: &str, id: &str) -> AppResult<bool> {
-        let _guard = self.lock.lock().map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
         let mut rows = self.read_collection(collection)?;
         let before = rows.len();
         rows.retain(|row| row.get("id").and_then(Value::as_str) != Some(id));
@@ -134,12 +160,18 @@ impl FileStorage {
     }
 
     pub fn replace_all(&self, collection: &str, rows: Vec<Value>) -> AppResult<()> {
-        let _guard = self.lock.lock().map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
         self.write_collection(collection, &rows)
     }
 
     pub fn clear_all(&self) -> AppResult<()> {
-        let _guard = self.lock.lock().map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
         let collections = self.root.join("collections");
         if collections.exists() {
             fs::remove_dir_all(&collections)?;
@@ -150,7 +182,10 @@ impl FileStorage {
 
     fn collection_path(&self, collection: &str) -> AppResult<PathBuf> {
         validate_collection_name(collection)?;
-        Ok(self.root.join("collections").join(format!("{collection}.json")))
+        Ok(self
+            .root
+            .join("collections")
+            .join(format!("{collection}.json")))
     }
 
     fn read_collection(&self, collection: &str) -> AppResult<Vec<Value>> {
@@ -187,7 +222,11 @@ pub fn record_id(value: &Value) -> Option<&str> {
     value.get("id").and_then(Value::as_str)
 }
 
-pub fn merge_object_field(record: &mut Value, field: &str, patch: Map<String, Value>) -> AppResult<()> {
+pub fn merge_object_field(
+    record: &mut Value,
+    field: &str,
+    patch: Map<String, Value>,
+) -> AppResult<()> {
     let object = record
         .as_object_mut()
         .ok_or_else(|| AppError::invalid_input("Stored record is not an object"))?;
