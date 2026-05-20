@@ -44,6 +44,16 @@ struct LegacyProfileAsset {
     kind: LegacyProfileAssetKind,
 }
 
+enum ProfileAssetSource {
+    Bytes(Vec<u8>),
+    ZipEntry(String),
+}
+
+struct ProfileAssetRestore {
+    relative: PathBuf,
+    source: ProfileAssetSource,
+}
+
 pub(super) fn profile_assets(state: &AppState) -> AppResult<Vec<Value>> {
     let mut assets = Vec::new();
     for dir in PROFILE_ASSET_DIRS {
@@ -98,17 +108,36 @@ fn restore_profile_json_assets(
     raw_assets: Option<&Value>,
     allow_legacy_data_field: bool,
 ) -> AppResult<usize> {
+    restore_profile_json_assets_in_root(&state.data_dir, raw_assets, allow_legacy_data_field)
+}
+
+fn restore_profile_json_assets_in_root(
+    data_dir: &Path,
+    raw_assets: Option<&Value>,
+    allow_legacy_data_field: bool,
+) -> AppResult<usize> {
+    let assets = decoded_profile_json_assets(raw_assets, allow_legacy_data_field)?;
+    clear_profile_asset_dirs(data_dir)?;
+    let restored = assets.len();
+    for (relative, bytes) in assets {
+        write_profile_asset_in_root(data_dir, &relative, &bytes)?;
+    }
+    Ok(restored)
+}
+
+fn decoded_profile_json_assets(
+    raw_assets: Option<&Value>,
+    allow_legacy_data_field: bool,
+) -> AppResult<Vec<(PathBuf, Vec<u8>)>> {
     let Some(assets) = raw_assets.and_then(Value::as_array) else {
-        return Ok(0);
+        return Ok(Vec::new());
     };
-    let mut restored = 0usize;
+    let mut decoded = Vec::new();
     for asset in assets {
         let Some(path) = asset.get("path").and_then(Value::as_str) else {
             continue;
         };
-        if should_skip_profile_asset_path(path) {
-            continue;
-        }
+        let relative = safe_profile_asset_path(path)?;
         let raw_data = if allow_legacy_data_field {
             asset
                 .get("base64")
@@ -120,12 +149,10 @@ fn restore_profile_json_assets(
         let Some(raw_data) = raw_data else {
             continue;
         };
-        let relative = safe_profile_asset_path(path)?;
         let bytes = decode_profile_asset_data(raw_data)?;
-        write_profile_asset(state, &relative, &bytes)?;
-        restored += 1;
+        decoded.push((relative, bytes));
     }
-    Ok(restored)
+    Ok(decoded)
 }
 
 pub(super) fn restore_profile_zip_assets<R: Read + Seek>(
@@ -135,34 +162,61 @@ pub(super) fn restore_profile_zip_assets<R: Read + Seek>(
     profile_prefix: &str,
     raw_assets: Option<&Value>,
 ) -> AppResult<usize> {
+    let assets = decoded_profile_zip_assets(raw_assets, names, profile_prefix)?;
+    clear_profile_asset_dirs(&state.data_dir)?;
+    let restored = assets.len();
+    for asset in assets {
+        match asset.source {
+            ProfileAssetSource::Bytes(bytes) => {
+                write_profile_asset_in_root(&state.data_dir, &asset.relative, &bytes)?;
+            }
+            ProfileAssetSource::ZipEntry(entry_name) => {
+                let target = state.data_dir.join(asset.relative);
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut entry = archive.by_name(&entry_name).map_err(|error| {
+                    AppError::invalid_input(format!(
+                        "Could not read profile asset {entry_name}: {error}"
+                    ))
+                })?;
+                let mut output = File::create(target)?;
+                std::io::copy(&mut entry, &mut output)?;
+                output.flush()?;
+            }
+        }
+    }
+    Ok(restored)
+}
+
+fn decoded_profile_zip_assets(
+    raw_assets: Option<&Value>,
+    names: &[String],
+    profile_prefix: &str,
+) -> AppResult<Vec<ProfileAssetRestore>> {
     let Some(assets) = raw_assets.and_then(Value::as_array) else {
-        return Ok(0);
+        return Ok(Vec::new());
     };
-    let mut restored = 0usize;
+    let mut decoded = Vec::new();
     for asset in assets {
         let Some(path) = asset.get("path").and_then(Value::as_str) else {
             continue;
         };
-        if should_skip_profile_asset_path(path) {
-            continue;
-        }
-        let Some(entry_name) = zip_asset_entry_name(names, profile_prefix, path) else {
+        let relative = safe_profile_asset_path(path)?;
+        let source = if let Some(raw_data) = asset
+            .get("base64")
+            .or_else(|| asset.get("data"))
+            .and_then(Value::as_str)
+        {
+            ProfileAssetSource::Bytes(decode_profile_asset_data(raw_data)?)
+        } else if let Some(entry_name) = zip_asset_entry_name(names, profile_prefix, path) {
+            ProfileAssetSource::ZipEntry(entry_name)
+        } else {
             continue;
         };
-        let relative = safe_profile_asset_path(path)?;
-        let target = state.data_dir.join(relative);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut entry = archive.by_name(&entry_name).map_err(|error| {
-            AppError::invalid_input(format!("Could not read profile asset {path}: {error}"))
-        })?;
-        let mut output = File::create(target)?;
-        std::io::copy(&mut entry, &mut output)?;
-        output.flush()?;
-        restored += 1;
+        decoded.push(ProfileAssetRestore { relative, source });
     }
-    Ok(restored)
+    Ok(decoded)
 }
 
 pub(super) fn normalize_legacy_profile_asset_paths(state: &AppState, value: &mut Value) {
@@ -362,12 +416,28 @@ fn decode_profile_asset_data(value: &str) -> AppResult<Vec<u8>> {
         .map_err(|error| AppError::invalid_input(format!("Invalid profile asset data: {error}")))
 }
 
-fn write_profile_asset(state: &AppState, relative: &Path, bytes: &[u8]) -> AppResult<()> {
-    let target = state.data_dir.join(relative);
+fn write_profile_asset_in_root(data_dir: &Path, relative: &Path, bytes: &[u8]) -> AppResult<()> {
+    let target = data_dir.join(relative);
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(target, bytes)?;
+    Ok(())
+}
+
+fn clear_profile_asset_dirs(data_dir: &Path) -> AppResult<()> {
+    for dir in PROFILE_ASSET_DIRS {
+        let path = data_dir.join(dir);
+        if !path.exists() {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
     Ok(())
 }
 
@@ -380,22 +450,6 @@ pub(super) fn should_skip_profile_asset_path(value: &str) -> bool {
     normalized
         .split('/')
         .any(|segment| segment.is_empty() || segment.starts_with('.'))
-}
-
-pub(super) fn profile_assets_need_zip_restore(raw_assets: Option<&Value>) -> bool {
-    raw_assets
-        .and_then(Value::as_array)
-        .map(|assets| {
-            assets.iter().any(|asset| {
-                asset.get("path").and_then(Value::as_str).is_some()
-                    && asset
-                        .get("base64")
-                        .or_else(|| asset.get("data"))
-                        .and_then(Value::as_str)
-                        .is_none()
-            })
-        })
-        .unwrap_or(false)
 }
 
 pub(super) fn safe_profile_asset_path(value: &str) -> AppResult<PathBuf> {
@@ -481,4 +535,97 @@ fn profile_relative_path(path: &Path) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_data_dir(test_name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "marinara-profile-{test_name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("temporary profile data dir should be created");
+        path
+    }
+
+    #[test]
+    fn profile_asset_restore_replaces_managed_asset_dirs() {
+        let data_dir = temp_data_dir("replace-assets");
+        fs::create_dir_all(data_dir.join("avatars")).unwrap();
+        fs::create_dir_all(data_dir.join("backgrounds/nested")).unwrap();
+        fs::create_dir_all(data_dir.join("lorebooks/images/old")).unwrap();
+        fs::create_dir_all(data_dir.join("unrelated")).unwrap();
+        fs::write(data_dir.join("avatars/stale.png"), b"stale").unwrap();
+        fs::write(data_dir.join("backgrounds/nested/stale.jpg"), b"stale").unwrap();
+        fs::write(data_dir.join("lorebooks/images/old/stale.webp"), b"stale").unwrap();
+        fs::write(data_dir.join("lorebooks/notes.txt"), b"keep").unwrap();
+        fs::write(data_dir.join("unrelated/keep.txt"), b"keep").unwrap();
+
+        let assets = json!([
+            {
+                "path": "avatars/new.png",
+                "base64": general_purpose::STANDARD.encode(b"new avatar"),
+            },
+            {
+                "path": "lorebooks/images/book/new.webp",
+                "base64": general_purpose::STANDARD.encode(b"new lorebook image"),
+            }
+        ]);
+
+        let restored =
+            restore_profile_json_assets_in_root(&data_dir, Some(&assets), false).unwrap();
+
+        assert_eq!(restored, 2);
+        assert_eq!(
+            fs::read(data_dir.join("avatars/new.png")).unwrap(),
+            b"new avatar"
+        );
+        assert_eq!(
+            fs::read(data_dir.join("lorebooks/images/book/new.webp")).unwrap(),
+            b"new lorebook image"
+        );
+        assert!(!data_dir.join("avatars/stale.png").exists());
+        assert!(!data_dir.join("backgrounds/nested/stale.jpg").exists());
+        assert!(!data_dir.join("lorebooks/images/old/stale.webp").exists());
+        assert_eq!(
+            fs::read(data_dir.join("lorebooks/notes.txt")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(
+            fs::read(data_dir.join("unrelated/keep.txt")).unwrap(),
+            b"keep"
+        );
+
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn invalid_profile_asset_payload_does_not_clear_existing_assets() {
+        let data_dir = temp_data_dir("invalid-keeps-assets");
+        fs::create_dir_all(data_dir.join("avatars")).unwrap();
+        fs::write(data_dir.join("avatars/stale.png"), b"stale").unwrap();
+        let assets = json!([
+            {
+                "path": "../escape.png",
+                "base64": general_purpose::STANDARD.encode(b"escape"),
+            }
+        ]);
+
+        let result = restore_profile_json_assets_in_root(&data_dir, Some(&assets), false);
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(data_dir.join("avatars/stale.png")).unwrap(),
+            b"stale"
+        );
+
+        fs::remove_dir_all(data_dir).unwrap();
+    }
 }

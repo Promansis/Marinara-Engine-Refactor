@@ -136,6 +136,15 @@ fn import_profile_collections(
     data: &Map<String, Value>,
     collections: &Map<String, Value>,
 ) -> AppResult<Value> {
+    let restored_assets = restore_profile_assets(state, data.get("assets"))?;
+    import_profile_collections_with_restored_assets(state, collections, restored_assets)
+}
+
+pub(super) fn import_profile_collections_with_restored_assets(
+    state: &AppState,
+    collections: &Map<String, Value>,
+    restored_assets: usize,
+) -> AppResult<Value> {
     let mut imported = Map::new();
     for collection in PROFILE_COLLECTIONS {
         let rows = collections
@@ -146,7 +155,6 @@ fn import_profile_collections(
         state.storage.replace_all(collection, rows.clone())?;
         imported.insert((*collection).to_string(), json!(rows.len()));
     }
-    let restored_assets = restore_profile_assets(state, data.get("assets"))?;
     imported.insert("files".to_string(), json!(restored_assets));
     insert_profile_import_aliases(&mut imported);
     Ok(json!({ "success": true, "imported": imported }))

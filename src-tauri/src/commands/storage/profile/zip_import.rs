@@ -1,7 +1,8 @@
-use super::assets::{
-    normalize_zip_entry_name, profile_assets_need_zip_restore, restore_profile_zip_assets,
+use super::assets::{normalize_zip_entry_name, restore_profile_zip_assets};
+use super::{
+    import_profile_collections_with_restored_assets,
+    legacy::import_legacy_profile_tables_with_restored_assets,
 };
-use super::{import_profile_collections, legacy::import_legacy_profile_tables};
 use crate::state::AppState;
 use marinara_core::{AppError, AppResult};
 use serde_json::Value;
@@ -28,11 +29,10 @@ pub(super) fn import_profile_zip(state: &AppState, path: &Path) -> AppResult<Val
         .get("fileStorage")
         .and_then(|value| value.get("files"))
         .or_else(|| data.get("assets"));
-    let zip_asset_refs = profile_assets_need_zip_restore(files);
-    let restored_assets =
-        restore_profile_zip_assets(state, &mut archive, &names, &profile_prefix, files)?;
-    let mut result = if let Some(collections) = data.get("collections").and_then(Value::as_object) {
-        import_profile_collections(state, data, collections)?
+    if let Some(collections) = data.get("collections").and_then(Value::as_object) {
+        let restored_assets =
+            restore_profile_zip_assets(state, &mut archive, &names, &profile_prefix, files)?;
+        import_profile_collections_with_restored_assets(state, collections, restored_assets)
     } else {
         let tables = data
             .get("fileStorage")
@@ -43,14 +43,10 @@ pub(super) fn import_profile_zip(state: &AppState, path: &Path) -> AppResult<Val
                     "Profile ZIP must contain data.collections or data.fileStorage.tables",
                 )
             })?;
-        import_legacy_profile_tables(state, data, tables)?
-    };
-    if restored_assets > 0 || zip_asset_refs {
-        if let Some(imported) = result.get_mut("imported").and_then(Value::as_object_mut) {
-            imported.insert("files".to_string(), serde_json::json!(restored_assets));
-        }
+        let restored_assets =
+            restore_profile_zip_assets(state, &mut archive, &names, &profile_prefix, files)?;
+        import_legacy_profile_tables_with_restored_assets(state, tables, restored_assets)
     }
-    Ok(result)
 }
 
 fn zip_entry_names<R: Read + std::io::Seek>(

@@ -2,29 +2,26 @@
 
 ## Current Work
 
-- Game asset operations can follow symlinks outside the managed asset root.
-  - Status: Done
-  - Next step: Ready for review on the focused bug-fix branch.
+- Profile import leaves stale asset files behind.
+  - Status: In review
+  - Next step: Ready for review on the focused bug-fix branch after Rust checks.
   - Blockers: None.
-
-
-
 
 ## Owned Bugs
 
-### Game asset operations can follow symlinks outside the managed asset root
+### Profile import leaves stale asset files behind
 
-- Status: Done
+- Status: In review
 - Owner: Promansis
-- Impact area: shared/api | Rust capability
+- Impact area: Rust capability
 - Reported: 2026-05-19
 - Last updated: 2026-05-19
 
 #### Notes
 
-The local-only bug backlog lists this as bug 1. The fix belongs to the Rust asset capability and shared path safety helper so reads, writes, moves, copies, deletes, file info, tree, and manifest paths stay inside the managed game asset root after symlink resolution.
+The local-only bug backlog lists this as bug 2. The fix belongs to the Rust profile import capability because profile restore replaces storage collections and managed asset files as one native restore operation.
 
-Resolved by canonicalizing managed asset roots, validating resolved asset paths against the root, skipping symlinked entries during asset scans/copies, and adding focused Rust regression coverage for symlink escapes.
+Resolved by validating and decoding imported asset payloads before mutation, clearing the managed profile asset directories, then writing only the imported profile assets. Invalid asset payloads now fail before existing managed files are removed.
 
 ## Status Notes
 

@@ -47,6 +47,14 @@ pub(super) fn import_legacy_profile_tables(
 ) -> AppResult<Value> {
     let files = data.get("fileStorage").and_then(|value| value.get("files"));
     let restored_assets = restore_legacy_profile_json_assets(state, files)?;
+    import_legacy_profile_tables_with_restored_assets(state, tables, restored_assets)
+}
+
+pub(super) fn import_legacy_profile_tables_with_restored_assets(
+    state: &AppState,
+    tables: &Map<String, Value>,
+    restored_assets: usize,
+) -> AppResult<Value> {
     let mut imported = Map::new();
     for (table, collection) in LEGACY_PROFILE_TABLES {
         let mut rows = table_rows(tables, table);
