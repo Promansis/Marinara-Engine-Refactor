@@ -2877,6 +2877,7 @@ dependencies = [
 name = "marinara-storage"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "marinara-core",
  "marinara-security",
  "serde",

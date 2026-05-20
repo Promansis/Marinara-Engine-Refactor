@@ -1,4 +1,4 @@
-export type MemoryVisibility = "private" | "shared" | "public";
+export type MemoryVisibility = "shared" | "private" | "model_only";
 
 export type MemoryMode = "chat" | "roleplay" | "game";
 
@@ -26,25 +26,11 @@ export type MemoryEventType =
   | "reindexed";
 
 export interface MemoryScope {
-  universeId?: string | null;
-  conversationId?: string | null;
-  roleplayId?: string | null;
-  gameId?: string | null;
+  universeId: string;
+  conversationId: string | null;
+  roleplayId: string | null;
+  gameId: string | null;
   visibility: MemoryVisibility;
-}
-
-export interface MemoryGate {
-  field: string;
-  operator: "equals" | "not_equals" | "contains" | "not_contains";
-  value: string;
-}
-
-export interface MemoryEvidence {
-  source: string;
-  quote?: string;
-  messageId?: string | null;
-  noteId?: string | null;
-  createdAt?: string;
 }
 
 export interface MemorySection {
@@ -52,8 +38,8 @@ export interface MemorySection {
   confidence: number;
   salience: number;
   visibility?: MemoryVisibility;
-  gates?: MemoryGate[];
-  evidence?: MemoryEvidence[];
+  gates?: string[];
+  evidence?: string[];
   updatedAt?: string;
 }
 
@@ -118,7 +104,7 @@ export interface MemoryEvent {
   target: MemoryEventTarget;
   field?: string;
   old?: unknown;
-  newValue?: unknown;
+  new?: unknown;
   cause?: string;
   turn?: number;
   mode?: MemoryMode;
@@ -132,8 +118,8 @@ export type MemoryEventDraft = Omit<MemoryEvent, "ts"> & {
 export interface MemoryManifestFile {
   path: string;
   hash: string;
-  bytes: number;
-  updatedAt?: string;
+  size: number;
+  updatedAt: string;
 }
 
 export interface MemoryManifest {
@@ -153,15 +139,19 @@ export interface MemoryValidationIssue {
 export interface MemoryValidationReport {
   ok: boolean;
   issues: MemoryValidationIssue[];
-  staleIndexes: boolean;
-  counts: Record<string, number>;
+  staleIndexes: string[];
+  counts: {
+    notes: number;
+    events: number;
+    files: number;
+  };
 }
 
 export interface MemoryRebuildRequest {
   force?: boolean;
   embeddingModel?: string | null;
   noteIds?: string[];
-  scope?: Partial<MemoryScope>;
+  scope?: MemoryScope | null;
 }
 
 export interface MemoryRebuildResult {
@@ -174,10 +164,10 @@ export interface MemoryRebuildResult {
 }
 
 export interface MemoryLayoutInfo {
-  version: string;
-  rootPath: string;
-  notesPath: string;
+  root: string;
+  vaultDir: string;
   eventsPath: string;
-  manifestPath: string;
-  indexesPath: string;
+  indexesDir: string;
+  usageDir: string;
+  configDir: string;
 }

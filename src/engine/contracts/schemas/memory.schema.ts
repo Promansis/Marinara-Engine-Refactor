@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const memoryVisibilitySchema = z.enum(["private", "shared", "public"]);
+export const memoryVisibilitySchema = z.enum(["shared", "private", "model_only"]);
 
 export const memoryModeSchema = z.enum(["chat", "roleplay", "game"]);
 
@@ -30,25 +30,11 @@ export const memoryEventTypeSchema = z.enum([
 ]);
 
 export const memoryScopeSchema = z.object({
-  universeId: z.string().nullable().optional(),
-  conversationId: z.string().nullable().optional(),
-  roleplayId: z.string().nullable().optional(),
-  gameId: z.string().nullable().optional(),
+  universeId: z.string(),
+  conversationId: z.string().nullable(),
+  roleplayId: z.string().nullable(),
+  gameId: z.string().nullable(),
   visibility: memoryVisibilitySchema,
-});
-
-export const memoryGateSchema = z.object({
-  field: z.string(),
-  operator: z.enum(["equals", "not_equals", "contains", "not_contains"]),
-  value: z.string(),
-});
-
-export const memoryEvidenceSchema = z.object({
-  source: z.string(),
-  quote: z.string().optional(),
-  messageId: z.string().nullable().optional(),
-  noteId: z.string().nullable().optional(),
-  createdAt: z.string().optional(),
 });
 
 export const memorySectionSchema = z.object({
@@ -56,8 +42,8 @@ export const memorySectionSchema = z.object({
   confidence: z.number().min(0).max(1),
   salience: z.number().min(0).max(1),
   visibility: memoryVisibilitySchema.optional(),
-  gates: z.array(memoryGateSchema).optional(),
-  evidence: z.array(memoryEvidenceSchema).optional(),
+  gates: z.array(z.string()).optional(),
+  evidence: z.array(z.string()).optional(),
   updatedAt: z.string().optional(),
 });
 
@@ -124,7 +110,7 @@ export const memoryEventSchema = z.object({
   target: memoryEventTargetSchema,
   field: z.string().optional(),
   old: z.unknown().optional(),
-  newValue: z.unknown().optional(),
+  new: z.unknown().optional(),
   cause: z.string().optional(),
   turn: z.number().int().optional(),
   mode: memoryModeSchema.optional(),
@@ -138,8 +124,8 @@ export const memoryEventDraftSchema = memoryEventSchema.extend({
 export const memoryManifestFileSchema = z.object({
   path: z.string(),
   hash: z.string(),
-  bytes: z.number().int().min(0),
-  updatedAt: z.string().optional(),
+  size: z.number().int().min(0),
+  updatedAt: z.string(),
 });
 
 export const memoryManifestSchema = z.object({
@@ -159,15 +145,19 @@ export const memoryValidationIssueSchema = z.object({
 export const memoryValidationReportSchema = z.object({
   ok: z.boolean(),
   issues: z.array(memoryValidationIssueSchema),
-  staleIndexes: z.boolean(),
-  counts: z.record(z.number()),
+  staleIndexes: z.array(z.string()),
+  counts: z.object({
+    notes: z.number().int().min(0),
+    events: z.number().int().min(0),
+    files: z.number().int().min(0),
+  }),
 });
 
 export const memoryRebuildRequestSchema = z.object({
   force: z.boolean().optional(),
   embeddingModel: z.string().nullable().optional(),
   noteIds: z.array(z.string()).optional(),
-  scope: memoryScopeSchema.partial().optional(),
+  scope: memoryScopeSchema.nullable().optional(),
 });
 
 export const memoryRebuildResultSchema = z.object({
@@ -180,12 +170,12 @@ export const memoryRebuildResultSchema = z.object({
 });
 
 export const memoryLayoutInfoSchema = z.object({
-  version: z.string(),
-  rootPath: z.string(),
-  notesPath: z.string(),
+  root: z.string(),
+  vaultDir: z.string(),
   eventsPath: z.string(),
-  manifestPath: z.string(),
-  indexesPath: z.string(),
+  indexesDir: z.string(),
+  usageDir: z.string(),
+  configDir: z.string(),
 });
 
 export type MemoryNoteDraftInput = z.input<typeof memoryNoteDraftSchema>;
