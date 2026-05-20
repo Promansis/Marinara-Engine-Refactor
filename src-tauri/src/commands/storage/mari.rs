@@ -113,7 +113,10 @@ impl ChatProvider for MarinaraLlmProvider {
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
         let request = marinara_llm::LlmRequest {
             connection: self.connection.clone(),
-            messages: messages.iter().map(autoagents_message_to_marinara).collect(),
+            messages: messages
+                .iter()
+                .map(autoagents_message_to_marinara)
+                .collect(),
             parameters: mari_request_parameters(messages, tools.unwrap_or_default()),
             tools: tools
                 .unwrap_or_default()
@@ -166,11 +169,14 @@ impl CompletionProvider for MarinaraLlmProvider {
         _json_schema: Option<StructuredOutputFormat>,
     ) -> Result<CompletionResponse, LLMError> {
         let response = self
-            .chat(&[ChatMessage {
-                role: ChatRole::User,
-                message_type: MessageType::Text,
-                content: request.prompt.clone(),
-            }], None)
+            .chat(
+                &[ChatMessage {
+                    role: ChatRole::User,
+                    message_type: MessageType::Text,
+                    content: request.prompt.clone(),
+                }],
+                None,
+            )
             .await?;
         Ok(CompletionResponse {
             text: response.text().unwrap_or_default(),
@@ -238,9 +244,12 @@ struct ProfessorMariAgent {
 pub(crate) async fn professor_mari_prompt(state: &AppState, body: Value) -> AppResult<Value> {
     let input: MariPromptRequest = serde_json::from_value(body.clone())
         .map_err(|error| AppError::invalid_input(error.to_string()))?;
-    let connection_value = resolve_llm_connection_for_request(state, &json!({
-        "connectionId": input.connection_id,
-    }))?;
+    let connection_value = resolve_llm_connection_for_request(
+        state,
+        &json!({
+            "connectionId": input.connection_id,
+        }),
+    )?;
     let connection = llm_connection_from_value(&connection_value)?;
     ensure_connection_supports_native_tools(&connection)?;
     let system_prompt = build_system_prompt(input.persona.as_ref());
@@ -260,11 +269,12 @@ pub(crate) async fn professor_mari_prompt(state: &AppState, body: Value) -> AppR
         .await
         .map_err(|error| AppError::new("mari_agent_create_failed", error.to_string()))?;
     let task = Task::new(task_prompt).with_system_prompt(system_prompt);
-    let response = agent_handle
-        .agent
-        .run(task)
-        .await
-        .map_err(|error| AppError::new("mari_agent_failed", tool_call_error_message(&error.to_string())))?;
+    let response = agent_handle.agent.run(task).await.map_err(|error| {
+        AppError::new(
+            "mari_agent_failed",
+            tool_call_error_message(&error.to_string()),
+        )
+    })?;
 
     Ok(json!({
         "content": response.to_string(),
@@ -391,9 +401,14 @@ fn build_task_prompt(input: &MariPromptRequest) -> String {
             })
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
-        sections.push(format!("Attached files for the latest user turn:\n{attachments}"));
+        sections.push(format!(
+            "Attached files for the latest user turn:\n{attachments}"
+        ));
     }
-    sections.push(format!("Latest user message:\n{}", input.user_message.trim()));
+    sections.push(format!(
+        "Latest user message:\n{}",
+        input.user_message.trim()
+    ));
     sections.join("\n\n")
 }
 
@@ -416,7 +431,9 @@ fn looks_like_library_question(message: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
-fn ensure_connection_supports_native_tools(connection: &marinara_llm::LlmConnection) -> AppResult<()> {
+fn ensure_connection_supports_native_tools(
+    connection: &marinara_llm::LlmConnection,
+) -> AppResult<()> {
     match connection.provider.as_str() {
         "openai" | "openai_chatgpt" | "openrouter" | "custom" | "xai" | "mistral" | "cohere" | "nanogpt" => Ok(()),
         provider => Err(AppError::invalid_input(format!(

@@ -10,6 +10,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -128,6 +129,9 @@ pub fn run() {
             storage_commands::entity_commands::storage_update,
             storage_commands::entity_commands::storage_delete,
             storage_commands::entity_commands::storage_duplicate,
+            storage_commands::game_state_snapshot_commands::tracker_snapshot_latest,
+            storage_commands::game_state_snapshot_commands::tracker_snapshot_get,
+            storage_commands::game_state_snapshot_commands::tracker_snapshot_save,
             storage_commands::chat_commands::chat_memories_list,
             storage_commands::chat_commands::chat_memory_delete,
             storage_commands::chat_commands::chat_memories_clear,

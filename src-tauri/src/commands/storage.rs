@@ -28,6 +28,8 @@ mod exports;
 mod fonts;
 #[path = "storage/game_assets.rs"]
 mod game_assets;
+#[path = "storage/game_state_snapshots.rs"]
+mod game_state_snapshots;
 #[path = "storage/generation.rs"]
 mod generation;
 #[path = "storage/http.rs"]
@@ -42,10 +44,10 @@ mod integrations;
 mod knowledge;
 #[path = "storage/llm.rs"]
 mod llm;
-#[path = "storage/mari.rs"]
-mod mari;
 #[path = "storage/lorebook_images.rs"]
 mod lorebook_images;
+#[path = "storage/mari.rs"]
+mod mari;
 #[path = "storage/media_uploads.rs"]
 mod media_uploads;
 #[path = "storage/profile.rs"]
@@ -69,13 +71,15 @@ pub mod bot_browser_commands;
 pub mod chat_commands;
 #[path = "storage/commands/entities.rs"]
 pub mod entity_commands;
+#[path = "storage/commands/game_state_snapshots.rs"]
+pub mod game_state_snapshot_commands;
 #[path = "storage/commands/imports.rs"]
 pub mod import_commands;
 #[path = "storage/commands/integrations.rs"]
 pub mod integration_commands;
-#[path = "storage/commands/media.rs"]
-pub mod media_commands;
 #[path = "storage/commands/mari.rs"]
 pub mod mari_commands;
+#[path = "storage/commands/media.rs"]
+pub mod media_commands;
 #[path = "storage/commands/profile.rs"]
 pub mod profile_commands;

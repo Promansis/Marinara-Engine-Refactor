@@ -1,9 +1,14 @@
+use futures_util::StreamExt;
 use marinara_core::{AppError, AppResult};
 use marinara_security::is_allowed_outbound_url;
-use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{env, fs, io::Write, path::PathBuf, process::{Command, Stdio}};
+use std::{
+    env, fs,
+    io::Write,
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 const OPENAI_CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const OPENAI_CHATGPT_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
@@ -67,13 +72,22 @@ pub async fn complete_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
     match request.connection.provider.as_str() {
         "anthropic" => complete_anthropic(request)
             .await
-            .map(|content| LlmCompletion { content, tool_calls: Vec::new() }),
-        "google" | "google_vertex" => complete_google(request)
-            .await
-            .map(|content| LlmCompletion { content, tool_calls: Vec::new() }),
-        "claude_subscription" => complete_claude_subscription(request)
-            .await
-            .map(|content| LlmCompletion { content, tool_calls: Vec::new() }),
+            .map(|content| LlmCompletion {
+                content,
+                tool_calls: Vec::new(),
+            }),
+        "google" | "google_vertex" => complete_google(request).await.map(|content| LlmCompletion {
+            content,
+            tool_calls: Vec::new(),
+        }),
+        "claude_subscription" => {
+            complete_claude_subscription(request)
+                .await
+                .map(|content| LlmCompletion {
+                    content,
+                    tool_calls: Vec::new(),
+                })
+        }
         _ => complete_openai_compatible_rich(request).await,
     }
 }
@@ -83,9 +97,7 @@ pub async fn stream_events(
     mut emit: impl FnMut(Value) -> AppResult<()> + Send,
 ) -> AppResult<()> {
     emit(json!({ "type": "start" }))?;
-    if should_use_openai_responses(&request)
-        || request.connection.provider == "openai_chatgpt"
-    {
+    if should_use_openai_responses(&request) || request.connection.provider == "openai_chatgpt" {
         stream_openai_responses(request, &mut emit).await?;
     } else if request.connection.provider != "anthropic"
         && request.connection.provider != "google"
@@ -159,7 +171,11 @@ fn stop_sequences(parameters: &Value) -> Option<Vec<String>> {
         .get("stop")
         .or_else(|| parameters.get("stopSequences"))
         .or_else(|| parameters.get("stop_sequences"))?;
-    if let Some(stop) = value.as_str().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(stop) = value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         return Some(vec![stop.to_string()]);
     }
     let stops = value
@@ -176,7 +192,10 @@ fn stop_sequences(parameters: &Value) -> Option<Vec<String>> {
 fn data_url_image(value: &str) -> Option<(&str, &str)> {
     let (meta, data) = value.split_once(',')?;
     let mime = meta.strip_prefix("data:")?.split(';').next()?;
-    if !meta.to_ascii_lowercase().contains(";base64") || !mime.starts_with("image/") || data.is_empty() {
+    if !meta.to_ascii_lowercase().contains(";base64")
+        || !mime.starts_with("image/")
+        || data.is_empty()
+    {
         return None;
     }
     Some((mime, data))
@@ -204,7 +223,9 @@ fn ensure_url_allowed(url: &str) -> AppResult<()> {
     if is_allowed_outbound_url(url, true) {
         Ok(())
     } else {
-        Err(AppError::invalid_input(format!("Outbound URL is not allowed: {url}")))
+        Err(AppError::invalid_input(format!(
+            "Outbound URL is not allowed: {url}"
+        )))
     }
 }
 
@@ -361,17 +382,29 @@ async fn load_openai_chatgpt_auth() -> AppResult<ChatGptAuth> {
         if let Some(refresh_token) = string_value(tokens.get("refresh_token")) {
             let refreshed = refresh_openai_chatgpt_auth(&refresh_token).await?;
             if let Some(next_access_token) = string_value(refreshed.get("access_token")) {
-                tokens.insert("access_token".to_string(), Value::String(next_access_token.clone()));
+                tokens.insert(
+                    "access_token".to_string(),
+                    Value::String(next_access_token.clone()),
+                );
                 access_token = next_access_token;
             }
             if let Some(next_refresh_token) = string_value(refreshed.get("refresh_token")) {
-                tokens.insert("refresh_token".to_string(), Value::String(next_refresh_token));
+                tokens.insert(
+                    "refresh_token".to_string(),
+                    Value::String(next_refresh_token),
+                );
             }
             if let Some(next_id_token) = string_value(refreshed.get("id_token")) {
                 tokens.insert("id_token".to_string(), Value::String(next_id_token));
             }
             auth_json["last_refresh"] = Value::String(chrono_like_now_iso());
-            let _ = fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&auth_json).unwrap_or(raw)));
+            let _ = fs::write(
+                &path,
+                format!(
+                    "{}\n",
+                    serde_json::to_string_pretty(&auth_json).unwrap_or(raw)
+                ),
+            );
         }
     }
     Ok(ChatGptAuth {
@@ -418,10 +451,13 @@ async fn refresh_openai_chatgpt_auth(refresh_token: &str) -> AppResult<Value> {
         .send()
         .await
         .map_err(|error| AppError::new("openai_chatgpt_auth_refresh_error", error.to_string()))?;
-    parse_json_response(response, |json| Some(json.to_string())).await.and_then(|raw| {
-        serde_json::from_str::<Value>(&raw)
-            .map_err(|error| AppError::new("openai_chatgpt_auth_refresh_error", error.to_string()))
-    })
+    parse_json_response(response, |json| Some(json.to_string()))
+        .await
+        .and_then(|raw| {
+            serde_json::from_str::<Value>(&raw).map_err(|error| {
+                AppError::new("openai_chatgpt_auth_refresh_error", error.to_string())
+            })
+        })
 }
 
 fn chrono_like_now_iso() -> String {
@@ -444,7 +480,9 @@ fn apply_openai_auth_headers(
     req
 }
 
-async fn apply_chatgpt_auth_headers(req: reqwest::RequestBuilder) -> AppResult<reqwest::RequestBuilder> {
+async fn apply_chatgpt_auth_headers(
+    req: reqwest::RequestBuilder,
+) -> AppResult<reqwest::RequestBuilder> {
     let auth = load_openai_chatgpt_auth().await?;
     let mut req = req
         .bearer_auth(auth.access_token)
@@ -497,14 +535,15 @@ async fn complete_openai_compatible_rich(request: LlmRequest) -> AppResult<LlmCo
         req = req.bearer_auth(request.connection.api_key.trim());
     }
     if request.connection.provider == "openrouter" {
-        req = req.header("HTTP-Referer", "https://marinara.local").header("X-Title", "Marinara Engine");
+        req = req
+            .header("HTTP-Referer", "https://marinara.local")
+            .header("X-Title", "Marinara Engine");
     }
     let response = req
         .send()
         .await
         .map_err(|error| AppError::new("llm_network_error", error.to_string()))?;
-    parse_json_response_rich(response)
-    .await
+    parse_json_response_rich(response).await
 }
 
 async fn stream_openai_compatible(
@@ -514,7 +553,10 @@ async fn stream_openai_compatible(
     let base = base_url(&request.connection.provider, &request.connection.base_url);
     let url = format!("{base}/chat/completions");
     ensure_url_allowed(&url)?;
-    let messages: Vec<Value> = request_messages(&request).iter().map(openai_message).collect();
+    let messages: Vec<Value> = request_messages(&request)
+        .iter()
+        .map(openai_message)
+        .collect();
     let mut body = json!({
         "model": request.connection.model,
         "messages": messages,
@@ -602,7 +644,8 @@ fn build_openai_responses_body(request: &LlmRequest, stream: bool) -> Value {
     if let Some(effort) = reasoning_effort(&request.parameters) {
         body["reasoning"] = json!({ "effort": effort, "summary": "auto" });
     }
-    if let Some(format) = param_string(&request.parameters, &["responseFormat", "response_format"]) {
+    if let Some(format) = param_string(&request.parameters, &["responseFormat", "response_format"])
+    {
         if format == "json_object" {
             body["text"] = json!({ "format": { "type": "json_object" } });
         }
@@ -626,7 +669,11 @@ fn build_openai_responses_body(request: &LlmRequest, stream: bool) -> Value {
         );
         body["tool_choice"] = json!("auto");
     }
-    if let Some(extra) = request.parameters.get("customParameters").or_else(|| request.parameters.get("custom_params")) {
+    if let Some(extra) = request
+        .parameters
+        .get("customParameters")
+        .or_else(|| request.parameters.get("custom_params"))
+    {
         if let Some(entries) = extra.as_object() {
             for (key, value) in entries {
                 if !body.get(key).is_some() {
@@ -692,7 +739,10 @@ async fn complete_openai_responses_rich(request: LlmRequest) -> AppResult<LlmCom
             json,
         ));
     }
-    Ok(LlmCompletion { content, tool_calls })
+    Ok(LlmCompletion {
+        content,
+        tool_calls,
+    })
 }
 
 fn responses_tool_calls(json: &Value) -> Vec<Value> {
@@ -763,15 +813,26 @@ fn process_openai_responses_sse_block(
     }
     let value: Value = serde_json::from_str(&payload)
         .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
-    let event_type = value.get("type").and_then(Value::as_str).unwrap_or(event_name);
+    let event_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or(event_name);
     match event_type {
         "response.output_text.delta" => {
-            if let Some(delta) = value.get("delta").and_then(Value::as_str).filter(|delta| !delta.is_empty()) {
+            if let Some(delta) = value
+                .get("delta")
+                .and_then(Value::as_str)
+                .filter(|delta| !delta.is_empty())
+            {
                 emit(json!({ "type": "token", "text": delta, "data": delta }))?;
             }
         }
         "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
-            if let Some(delta) = value.get("delta").and_then(Value::as_str).filter(|delta| !delta.is_empty()) {
+            if let Some(delta) = value
+                .get("delta")
+                .and_then(Value::as_str)
+                .filter(|delta| !delta.is_empty())
+            {
                 emit(json!({ "type": "thinking", "text": delta, "data": delta }))?;
             }
         }
@@ -779,7 +840,10 @@ fn process_openai_responses_sse_block(
             emit(json!({ "type": "tool_call", "data": value }))?;
         }
         "response.completed" => {
-            if let Some(usage) = value.pointer("/response/usage").or_else(|| value.get("usage")) {
+            if let Some(usage) = value
+                .pointer("/response/usage")
+                .or_else(|| value.get("usage"))
+            {
                 emit(json!({ "type": "usage", "data": usage }))?;
             }
         }
@@ -849,7 +913,11 @@ fn openai_message(message: &LlmMessage) -> Value {
         }
         object.insert("content".to_string(), Value::Array(content));
     }
-    if let Some(name) = message.name.as_ref().filter(|value| !value.trim().is_empty()) {
+    if let Some(name) = message
+        .name
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
         object.insert("name".to_string(), json!(name));
     }
     if let Some(tool_call_id) = message
@@ -875,10 +943,13 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             body["top_k"] = json!(top_k);
         }
     }
-    if let Some(frequency_penalty) = param_f64(parameters, &["frequencyPenalty", "frequency_penalty"]) {
+    if let Some(frequency_penalty) =
+        param_f64(parameters, &["frequencyPenalty", "frequency_penalty"])
+    {
         body["frequency_penalty"] = json!(frequency_penalty);
     }
-    if let Some(presence_penalty) = param_f64(parameters, &["presencePenalty", "presence_penalty"]) {
+    if let Some(presence_penalty) = param_f64(parameters, &["presencePenalty", "presence_penalty"])
+    {
         body["presence_penalty"] = json!(presence_penalty);
     }
     if let Some(seed) = param_i64(parameters, &["seed"]) {
@@ -909,7 +980,10 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             body["cache_control"] = json!({ "type": "ephemeral" });
         }
     }
-    if let Some(extra) = parameters.get("customParameters").or_else(|| parameters.get("custom_params")) {
+    if let Some(extra) = parameters
+        .get("customParameters")
+        .or_else(|| parameters.get("custom_params"))
+    {
         if let Some(entries) = extra.as_object() {
             for (key, value) in entries {
                 if !body.get(key).is_some() {
@@ -918,7 +992,10 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
             }
         }
     }
-    if let Some(openrouter) = parameters.get("openrouter").or_else(|| parameters.get("openRouter")) {
+    if let Some(openrouter) = parameters
+        .get("openrouter")
+        .or_else(|| parameters.get("openRouter"))
+    {
         if !openrouter.is_null() {
             body["provider"] = openrouter.clone();
         }
@@ -944,7 +1021,11 @@ fn render_claude_subscription_transcript(messages: &[LlmMessage]) -> (Option<Str
             system.push(content.to_string());
             continue;
         }
-        let label = if message.role == "assistant" { "Assistant" } else { "User" };
+        let label = if message.role == "assistant" {
+            "Assistant"
+        } else {
+            "User"
+        };
         turns.push(format!("{label}: {content}"));
     }
     if turns.is_empty() {
@@ -968,7 +1049,10 @@ fn claude_subscription_command() -> String {
 pub fn check_claude_subscription_available() -> AppResult<String> {
     let command_name = claude_subscription_command();
     let mut command = Command::new(&command_name);
-    command.arg("--version").stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -1136,7 +1220,11 @@ async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
         if message.role == "system" {
             system.push(message.content);
         } else {
-            let role = if message.role == "assistant" { "assistant" } else { "user" };
+            let role = if message.role == "assistant" {
+                "assistant"
+            } else {
+                "user"
+            };
             if message.images.is_empty() {
                 anthropic_messages.push(json!({ "role": role, "content": message.content }));
             } else {
@@ -1191,7 +1279,11 @@ async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
     parse_json_response(response, |json| {
         json.get("content")
             .and_then(Value::as_array)
-            .and_then(|items| items.iter().find_map(|item| item.get("text").and_then(Value::as_str)))
+            .and_then(|items| {
+                items
+                    .iter()
+                    .find_map(|item| item.get("text").and_then(Value::as_str))
+            })
             .map(ToOwned::to_owned)
     })
     .await
@@ -1239,7 +1331,11 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
         .into_iter()
         .filter(|message| message.role != "system")
         .map(|message| {
-            let role = if message.role == "assistant" { "model" } else { "user" };
+            let role = if message.role == "assistant" {
+                "model"
+            } else {
+                "user"
+            };
             let mut parts = Vec::new();
             if !message.content.is_empty() {
                 parts.push(json!({ "text": message.content }));
@@ -1281,7 +1377,11 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
             .and_then(|candidate| candidate.get("content"))
             .and_then(|content| content.get("parts"))
             .and_then(Value::as_array)
-            .and_then(|parts| parts.iter().find_map(|part| part.get("text").and_then(Value::as_str)))
+            .and_then(|parts| {
+                parts
+                    .iter()
+                    .find_map(|part| part.get("text").and_then(Value::as_str))
+            })
             .map(ToOwned::to_owned)
     })
     .await
@@ -1414,14 +1514,14 @@ async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmC
             json,
         ));
     }
-    Ok(LlmCompletion { content, tool_calls })
+    Ok(LlmCompletion {
+        content,
+        tool_calls,
+    })
 }
 
 fn normalize_tool_call(call: Value) -> Value {
-    let function = call
-        .get("function")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let function = call.get("function").cloned().unwrap_or_else(|| json!({}));
     let name = function
         .get("name")
         .or_else(|| call.get("name"))
