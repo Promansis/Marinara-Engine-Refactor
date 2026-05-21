@@ -2,6 +2,13 @@
 
 ## Current Work
 
+- GitHub issue #34: Debug Mode contract mismatch.
+  - Status: Locally verified
+  - Last updated: 2026-05-21
+  - Current path: `src/shared/api/llm-api.ts` debug logging and Settings copy.
+  - Result: shared LLM complete/stream calls now emit redacted prompt and response payloads to the browser console when Debug mode is enabled, while the in-app agent debug panel remains tied to the same setting.
+  - Next step: smoke a real generation path with Debug mode enabled and confirm the console groups appear.
+
 - Message translation failures leave no visible error
   - Status: Fixed locally on `fix/bug-19-translation-errors`
   - Impact area: UI, shared/api, Rust capability error surface
@@ -9,6 +16,34 @@
   - Blockers: None.
 
 ## Owned Bugs
+
+## Debug Mode contract mismatch
+
+- Status: Locally verified
+- Owner: Promansis
+- Impact area: shared/api
+- Reported: 2026-05-21
+- Last updated: 2026-05-21
+
+### Steps
+
+1. Enable Debug mode in settings.
+2. Run a generation path.
+3. Compare the Settings help text against the runtime debug output.
+
+### Expected
+
+Debug mode should match its documented contract.
+
+### Actual
+
+The in-app agent debug panel is wired, but prompt/response console logging is not consistently owned by a shared LLM helper.
+
+### Notes
+
+- Upstream issue: https://github.com/Pasta-Devs/Marinara-Engine-Refactor/issues/34
+- Fix: centralized redacted LLM request/response console logging in `src/shared/api/llm-api.ts` while preserving the agent debug panel.
+- Verification: `pnpm typecheck` and `pnpm check` passed.
 
 ## Message translation failures leave no visible error
 

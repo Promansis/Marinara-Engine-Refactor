@@ -1,5 +1,6 @@
 import type { LlmChunk, LlmGateway, LlmRequest } from "../../engine/capabilities/llm";
 import { Channel } from "@tauri-apps/api/core";
+import { logLlmCompleteResponse, logLlmRequest, logLlmStreamResponse } from "./llm-debug-logger";
 import { invokeTauri } from "./tauri-client";
 
 function createStreamId(): string {
@@ -8,13 +9,20 @@ function createStreamId(): string {
 }
 
 export const llmApi: LlmGateway = {
-  complete: (request: LlmRequest) =>
-    invokeTauri("llm_complete", {
+  complete: async (request: LlmRequest) => {
+    logLlmRequest("complete", request);
+    const response = await invokeTauri<string>("llm_complete", {
       request,
-    }),
+    });
+    logLlmCompleteResponse(response);
+    return response;
+  },
   stream: async function* (request: LlmRequest, signal?: AbortSignal): AsyncGenerator<LlmChunk> {
+    logLlmRequest("stream", request);
     const streamId = createStreamId();
     const queue: LlmChunk[] = [];
+    const debugChunks: LlmChunk[] = [];
+    let debugContent = "";
     let completed = false;
     let failure: unknown = null;
     let wake: (() => void) | null = null;
@@ -60,11 +68,19 @@ export const llmApi: LlmGateway = {
           continue;
         }
         const event = queue.shift()!;
+        debugChunks.push(event);
+        if ((event.type === "token" || event.type === "thinking") && event.text) {
+          debugContent += event.text;
+        }
         if (event.type === "error") throw new Error(String(event.text ?? event.data ?? "LLM stream failed"));
         yield event;
       }
       await command;
       if (failure) throw failure;
+      logLlmStreamResponse(debugChunks, debugContent);
+    } catch (error) {
+      logLlmStreamResponse(debugChunks, debugContent, error);
+      throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
     }
