@@ -443,17 +443,20 @@ fn file_entry(root: &Path, relative: &str) -> AppResult<Value> {
 }
 
 fn note_matches_options(note: &Value, options: Option<&Value>) -> bool {
+    let status = options
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str);
     let include_archived = options
         .and_then(|value| value.get("includeArchived"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    if !include_archived && note.get("status").and_then(Value::as_str) == Some("archived") {
+    if status != Some("archived")
+        && !include_archived
+        && note.get("status").and_then(Value::as_str) == Some("archived")
+    {
         return false;
     }
-    if let Some(status) = options
-        .and_then(|value| value.get("status"))
-        .and_then(Value::as_str)
-    {
+    if let Some(status) = status {
         if note.get("status").and_then(Value::as_str) != Some(status) {
             return false;
         }
@@ -539,4 +542,27 @@ fn chrono_like_system_time(time: std::time::SystemTime) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!("unix:{}", duration.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archived_status_filter_matches_archived_notes_without_include_archived() {
+        let archived_note = json!({
+            "id": "archived-note",
+            "status": "archived",
+            "updatedAt": "2026-05-21T00:00:00Z"
+        });
+        let active_note = json!({
+            "id": "active-note",
+            "status": "active",
+            "updatedAt": "2026-05-21T00:00:00Z"
+        });
+        let options = json!({ "status": "archived" });
+
+        assert!(note_matches_options(&archived_note, Some(&options)));
+        assert!(!note_matches_options(&active_note, Some(&options)));
+    }
 }

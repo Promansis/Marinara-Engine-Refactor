@@ -10,6 +10,15 @@
 
 ## Owned Bugs
 
+## Archived memory notes cannot be listed with the archived status filter
+
+- Status: Fixed locally on `pr1-memory-boundary`
+- Owner: Promansis
+- Impact area: Rust storage capability
+- Reported: 2026-05-21
+- Last updated: 2026-05-21
+- Notes: `list_notes` now honors an explicit `status: "archived"` filter before applying the default archived-note exclusion. `includeArchived: true` is still only needed when callers want archived rows included in broader non-archived queries.
+
 ## Message translation failures leave no visible error
 
 - Status: Fixed locally on `fix/bug-19-translation-errors`
