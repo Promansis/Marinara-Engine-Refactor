@@ -501,7 +501,7 @@ export function useUpdateRollingChatSummary() {
         patch.summaryEntries = normalizeChatSummaryEntries(body.summaryEntries);
         patch.summary = compileChatSummaryEntries(patch.summaryEntries as ChatSummaryEntry[]);
       }
-      if (body.summaryPromptTemplates) {
+      if (body.summaryPromptTemplates !== undefined) {
         patch.summaryPromptTemplates = normalizeChatSummaryPromptTemplates(body.summaryPromptTemplates);
       }
       if (body.activeSummaryPromptTemplateId !== undefined) {

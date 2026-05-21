@@ -794,7 +794,7 @@ export function ChatRoleplaySurface({
                           : null
                       }
                       summaryContextSize={summaryContextSize}
-                      totalMessageCount={messages?.length ?? 0}
+                      totalMessageCount={totalMessageCount}
                       onContextSizeChange={onSummaryContextSizeChange}
                     />
                     <ActiveWorldInfoButton chatId={chat?.id ?? null} />
@@ -890,7 +890,7 @@ export function ChatRoleplaySurface({
                               : null
                           }
                           summaryContextSize={summaryContextSize}
-                          totalMessageCount={messages?.length ?? 0}
+                          totalMessageCount={totalMessageCount}
                           onContextSizeChange={onSummaryContextSizeChange}
                         />
                         <ActiveWorldInfoButton chatId={chat?.id ?? null} />
@@ -958,7 +958,7 @@ export function ChatRoleplaySurface({
                             : null
                         }
                         summaryContextSize={summaryContextSize}
-                        totalMessageCount={messages?.length ?? 0}
+                        totalMessageCount={totalMessageCount}
                         onContextSizeChange={onSummaryContextSizeChange}
                       />
                       <ActiveWorldInfoButton chatId={chat?.id ?? null} />
