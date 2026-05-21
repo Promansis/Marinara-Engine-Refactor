@@ -87,8 +87,8 @@ export interface ChatSummaryPromptTemplate {
 /** Rolling summary entry category. Extensible beyond rolling summaries later. */
 export type ChatSummaryEntryKind = "rolling";
 
-/** Whether a rolling summary entry was user-created or agent-created. */
-export type ChatSummaryEntryOrigin = "manual" | "automated";
+/** Whether a rolling summary entry was user-created, agent-created, or migrated from the legacy blob. */
+export type ChatSummaryEntryOrigin = "manual" | "automated" | "legacy";
 
 /** Source selector used to create a rolling summary entry. */
 export type ChatSummaryEntrySource = "last" | "range" | "agent";
@@ -133,7 +133,7 @@ export interface ChatMemoryChunk {
 export interface ChatMetadata {
   /** Compiled enabled rolling summary text for context injection. */
   summary: string | null;
-  /** Structured rolling summary entries. */
+  /** Structured rolling summary entries. Missing means legacy summary-only metadata. */
   summaryEntries?: ChatSummaryEntry[];
   /** Recent message count used by manual rolling summary generation and the automated summary agent. */
   summaryContextSize?: number;

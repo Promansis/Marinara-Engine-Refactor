@@ -497,7 +497,7 @@ export function useUpdateRollingChatSummary() {
       summary?: string | null;
     }) => {
       const patch: Record<string, unknown> = {};
-      if (body.summaryEntries) {
+      if (body.summaryEntries !== undefined) {
         patch.summaryEntries = normalizeChatSummaryEntries(body.summaryEntries);
         patch.summary = compileChatSummaryEntries(patch.summaryEntries as ChatSummaryEntry[]);
       }

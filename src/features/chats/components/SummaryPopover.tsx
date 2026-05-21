@@ -265,8 +265,8 @@ export function SummaryPopover({
       {isMobile && <div className="absolute inset-0 bg-black/30" onClick={onClose} />}
       <div
         className={cn(
-          "relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-2xl shadow-black/40",
-          isMobile ? "h-[calc(100dvh-1.5rem)] w-full max-w-md" : "w-[28rem] max-w-[calc(100vw-2rem)]",
+          "relative rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-2xl shadow-black/40",
+          isMobile ? "h-[calc(100dvh-1.5rem)] w-full max-w-md overflow-hidden" : "w-[28rem] max-w-[calc(100vw-2rem)] overflow-visible",
         )}
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
