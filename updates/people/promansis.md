@@ -2,6 +2,18 @@
 
 ## Current Work
 
+### Character import drag-and-drop handling
+
+- Status: Fixed locally on `bug/38-character-import-dnd`
+- Owner: Promansis
+- Impact area: UI
+- Reported: 2026-05-21
+- Last updated: 2026-05-22
+- Likely root cause: The import character modal only watched `dataTransfer.files`, so folder-like drops and nested drag events could leave the hover state and rejection path inconsistent.
+- Resolution: The modal now tracks drag depth, stops propagation for drop-zone drag events, sets copy drop effect, and shows a clear rejection message for folder/unsupported drops.
+- Verification: `pnpm typecheck`; `pnpm check`.
+- Next step: Manual smoke in `pnpm tauri dev` by dropping JSON/PNG/CharX/Marinara files and a folder onto the Import Character modal.
+
 - Message translation failures leave no visible error
   - Status: Fixed locally on `fix/bug-19-translation-errors`
   - Impact area: UI, shared/api, Rust capability error surface
