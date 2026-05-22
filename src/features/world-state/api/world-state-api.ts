@@ -99,10 +99,37 @@ function withTarget(state: WorldState, chatId: string, target: ResolvedWorldStat
   return { ...state, chatId, messageId: target.messageId, swipeIndex: target.swipeIndex };
 }
 
-async function latestAssistantTarget(chatId: string): Promise<ResolvedWorldStateTarget | null> {
+function targetKey(target: ResolvedWorldStateTarget) {
+  return `${target.messageId}\u0000${target.swipeIndex}`;
+}
+
+function canUseChatGameStateFallback(
+  state: WorldState | undefined,
+  target: ResolvedWorldStateTarget | null,
+  options: {
+    activeTargetKeys?: Set<string>;
+    hasVisibleTarget?: boolean;
+    requestedTarget?: boolean;
+  } = {},
+) {
+  if (!state) return false;
+  if (!target) return true;
+  const stateTarget = readTarget(state);
+  if (!stateTarget?.messageId) return true;
+  const exact = stateTarget.messageId === target.messageId && stateTarget.swipeIndex === target.swipeIndex;
+  if (options.requestedTarget) return exact;
+  if (exact && options.hasVisibleTarget) return true;
+  return exact && (options.activeTargetKeys?.has(targetKey(stateTarget)) ?? false);
+}
+
+async function visibleTargetContext(chatId: string): Promise<{
+  target: ResolvedWorldStateTarget | null;
+  activeTargetKeys: Set<string>;
+}> {
   const messages = await storageApi.listChatMessages<Record<string, unknown>>(chatId);
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
+  const activeTargetKeys = new Set<string>();
+  let target: ResolvedWorldStateTarget | null = null;
+  for (const message of messages) {
     if (message.role !== "assistant" || typeof message.id !== "string" || !message.id) continue;
     const swipeIndex =
       typeof message.activeSwipeIndex === "number" &&
@@ -110,9 +137,15 @@ async function latestAssistantTarget(chatId: string): Promise<ResolvedWorldState
       message.activeSwipeIndex >= 0
         ? message.activeSwipeIndex
         : 0;
-    return { messageId: message.id, swipeIndex };
+    const assistantTarget = { messageId: message.id, swipeIndex };
+    activeTargetKeys.add(targetKey(assistantTarget));
+    target = assistantTarget;
   }
-  return null;
+  return { target, activeTargetKeys };
+}
+
+async function latestAssistantTarget(chatId: string): Promise<ResolvedWorldStateTarget | null> {
+  return (await visibleTargetContext(chatId)).target;
 }
 
 async function resolveVisibleTarget(chatId: string, fallback: unknown): Promise<ResolvedWorldStateTarget | null> {
@@ -131,14 +164,21 @@ async function getWorldState(
   throwIfAborted(init);
   const chat = await storageApi.get<{ gameState?: WorldState }>("chats", chatId);
   throwIfAborted(init);
-  const target = requestedTarget ?? (await resolveVisibleTarget(chatId, chat?.gameState));
+  const visibleContext = requestedTarget ? null : await visibleTargetContext(chatId).catch(() => null);
+  const target = requestedTarget ?? visibleContext?.target ?? readTarget(chat?.gameState);
   throwIfAborted(init);
   if (target) {
     const snapshot = await trackerSnapshotApi.get(chatId, target);
     throwIfAborted(init);
     if (snapshot) return snapshot;
   }
-  return chat?.gameState ? withTarget(chat.gameState, chatId, target) : null;
+  return canUseChatGameStateFallback(chat?.gameState, target, {
+    activeTargetKeys: visibleContext?.activeTargetKeys,
+    hasVisibleTarget: !!visibleContext?.target,
+    requestedTarget: !!requestedTarget,
+  }) && chat?.gameState
+    ? withTarget(chat.gameState, chatId, target)
+    : null;
 }
 
 export const worldStateApi: WorldStateApi = {

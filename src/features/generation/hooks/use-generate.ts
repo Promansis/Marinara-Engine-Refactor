@@ -35,6 +35,7 @@ import {
   type GenerationReplayInput,
   type GenerationReplay,
 } from "../../../engine/generation/generation-replay";
+import { readNonNegativeInteger } from "../../../engine/generation/runtime-records";
 
 export type GenerateArgs = GenerationReplayInput & {
   chatId: string;
@@ -447,11 +448,6 @@ function readNumber(value: unknown, fallback: number): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
-}
-
-function readNonNegativeInteger(value: unknown, fallback: number): number {
-  const parsed = readNumber(value, fallback);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function trackerTargetFromMessagePayload(value: unknown): WorldStateTarget | null {
