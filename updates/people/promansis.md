@@ -2,6 +2,12 @@
 
 ## Current Work
 
+- Character import/delete cache churn
+  - Status: Fixed locally on `bug/39-character-cache-churn`
+  - Impact area: UI
+  - Next step: Manual smoke import/delete in the desktop app while watching storage/network activity for avoidable character list refetches.
+  - Blockers: None.
+
 - Message translation failures leave no visible error
   - Status: Fixed locally on `fix/bug-19-translation-errors`
   - Impact area: UI, shared/api, Rust capability error surface
