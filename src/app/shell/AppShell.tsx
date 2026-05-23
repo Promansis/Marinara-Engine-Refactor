@@ -5,6 +5,7 @@ import { ChatSidebar, type ChatSidebarTab } from "./ChatSidebar";
 import { TopBar } from "./TopBar";
 import { WindowTitleBar } from "./WindowTitleBar";
 import { SpotifyMobileWidget } from "../../features/spotify/components/SpotifyMiniPlayer";
+import { AgentDebugPanel } from "../../features/agents/components/AgentDebugPanel";
 import { ChatNotificationBubbles } from "../../features/chats/components/ChatNotificationBubbles";
 import {
   getTrackerPanelWidthForProfile,
@@ -1022,6 +1023,7 @@ export function AppShell() {
           <OnboardingTutorial />
         </Suspense>
       )}
+      <AgentDebugPanel />
       <SpotifyMobileWidget />
       </div>
     </div>
