@@ -48,8 +48,9 @@ import {
 } from "lucide-react";
 import { getCharacterTitle } from "../../../shared/lib/character-display";
 import { useUIStore } from "../../../shared/stores/ui.store";
-import { cn, getAvatarCropStyle, type AvatarCrop } from "../../../shared/lib/utils";
+import { cn } from "../../../shared/lib/utils";
 import { ExportFormatDialog, type ExportFormatChoice } from "../../../shared/components/ui/ExportFormatDialog";
+import { CharacterAvatarImage } from "./CharacterAvatarImage";
 
 type CharacterRow = {
   id: string;
@@ -946,12 +947,7 @@ export function CharactersPanel() {
                           >
                             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg overflow-hidden bg-gradient-to-br from-pink-400 to-rose-500 text-white">
                               {member.avatarPath ? (
-                                <img
-                                  src={member.avatarPath}
-                                  alt={member.name}
-                                  loading="lazy"
-                                  className="h-full w-full object-cover"
-                                />
+                                <CharacterAvatarImage src={member.avatarPath} alt={member.name} />
                               ) : (
                                 <User size="0.75rem" />
                               )}
@@ -1120,14 +1116,10 @@ export function CharactersPanel() {
               <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-pink-400 to-rose-500 text-white shadow-sm">
                 {avatarUrl ? (
                   <div className="absolute inset-0 overflow-hidden rounded-xl">
-                    <img
+                    <CharacterAvatarImage
                       src={avatarUrl}
                       alt={charName}
-                      className="h-full w-full object-cover"
-                      style={getAvatarCropStyle(
-                        char.parsed.extensions?.avatarCrop as AvatarCrop
-                          | undefined,
-                      )}
+                      crop={char.parsed.extensions?.avatarCrop}
                     />
                   </div>
                 ) : (
